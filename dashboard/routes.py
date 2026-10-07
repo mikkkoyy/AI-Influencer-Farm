@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Body
 from sqlalchemy import func, case
 
 from core.db import get_session
-from core.models import Video, ApiKey, EmailThread, PipelineRun, AuditLog, VideoMetrics
+from core.models import Video, ApiKey, EmailThread, PipelineRun, AuditLog, VideoMetrics, Influencer, VoicePreset, SocialConnection, ContentCalendarEntry, ImageGenerationHistory, AnalyticsSnapshot
 from core import audit
 from config.settings import (
     settings,
@@ -439,6 +439,292 @@ async def get_accounts():
         safe["has_tiktok_cookies"] = bool(cfg.get("tiktok_cookies_path"))
         out[acc] = safe
     return out
+
+
+@router.get("/influencers")
+async def get_influencers(status: Optional[str] = None):
+    """List all virtual influencers."""
+    with get_session() as session:
+        query = session.query(Influencer).order_by(Influencer.created_at.desc())
+        if status:
+            query = query.filter(Influencer.status == status)
+        items = []
+        for inf in query.all():
+            items.append({
+                "id": inf.id,
+                "name": inf.name,
+                "display_name": inf.display_name,
+                "slug": inf.slug,
+                "niche": inf.niche,
+                "bio": inf.bio,
+                "personality": inf.personality,
+                "target_audience": inf.target_audience,
+                "visual_description": inf.visual_description,
+                "profile_picture_path": inf.profile_picture_path,
+                "reference_images": json.loads(inf.reference_images_json) if inf.reference_images_json else [],
+                "writing_style": inf.writing_style,
+                "preferred_language": inf.preferred_language,
+                "status": inf.status,
+                "created_at": inf.created_at.isoformat() if inf.created_at else None,
+                "updated_at": inf.updated_at.isoformat() if inf.updated_at else None,
+            })
+        return items
+
+
+@router.get("/influencers/{influencer_id}")
+async def get_influencer(influencer_id: int):
+    with get_session() as session:
+        inf = session.query(Influencer).filter_by(id=influencer_id).first()
+        if not inf:
+            raise HTTPException(404, "Influencer not found")
+        return {
+            "id": inf.id,
+            "name": inf.name,
+            "display_name": inf.display_name,
+            "slug": inf.slug,
+            "niche": inf.niche,
+            "bio": inf.bio,
+            "personality": inf.personality,
+            "target_audience": inf.target_audience,
+            "visual_description": inf.visual_description,
+            "profile_picture_path": inf.profile_picture_path,
+            "reference_images": json.loads(inf.reference_images_json) if inf.reference_images_json else [],
+            "writing_style": inf.writing_style,
+            "preferred_language": inf.preferred_language,
+            "status": inf.status,
+            "created_at": inf.created_at.isoformat() if inf.created_at else None,
+            "updated_at": inf.updated_at.isoformat() if inf.updated_at else None,
+        }
+
+
+@router.post("/influencers")
+async def create_influencer(payload: dict = Body(...)):
+    required = ["name", "slug"]
+    missing = [k for k in required if not payload.get(k)]
+    if missing:
+        raise HTTPException(400, f"Missing fields: {', '.join(missing)}")
+
+    with get_session() as session:
+        existing = session.query(Influencer).filter(
+            (Influencer.name == payload["name"]) | (Influencer.slug == payload["slug"])
+        ).first()
+        if existing:
+            raise HTTPException(400, "Influencer with this name or slug already exists")
+
+        inf = Influencer(
+            name=payload["name"],
+            display_name=payload.get("display_name") or payload["name"],
+            slug=payload["slug"],
+            niche=payload.get("niche"),
+            bio=payload.get("bio"),
+            personality=payload.get("personality"),
+            target_audience=payload.get("target_audience"),
+            visual_description=payload.get("visual_description"),
+            profile_picture_path=payload.get("profile_picture_path"),
+            reference_images_json=json.dumps(payload.get("reference_images", [])),
+            writing_style=payload.get("writing_style"),
+            preferred_language=payload.get("preferred_language", "en"),
+            status=payload.get("status", "active"),
+        )
+        session.add(inf)
+        session.flush()
+        result = {
+            "id": inf.id,
+            "name": inf.name,
+            "display_name": inf.display_name,
+            "slug": inf.slug,
+        }
+        audit.record("influencer_created", actor="dashboard", target=str(inf.id), details=result)
+        return result
+
+
+@router.put("/influencers/{influencer_id}")
+async def update_influencer(influencer_id: int, payload: dict = Body(...)):
+    with get_session() as session:
+        inf = session.query(Influencer).filter_by(id=influencer_id).first()
+        if not inf:
+            raise HTTPException(404, "Influencer not found")
+
+        for field in ("display_name", "niche", "bio", "personality", "target_audience",
+                      "visual_description", "profile_picture_path", "writing_style",
+                      "preferred_language", "status"):
+            if field in payload:
+                setattr(inf, field, payload[field])
+
+        if "reference_images" in payload:
+            inf.reference_images_json = json.dumps(payload["reference_images"])
+
+        session.flush()
+        audit.record("influencer_updated", actor="dashboard", target=str(inf.id))
+        return {"updated": True, "id": inf.id}
+
+
+@router.delete("/influencers/{influencer_id}")
+async def delete_influencer(influencer_id: int):
+    with get_session() as session:
+        inf = session.query(Influencer).filter_by(id=influencer_id).first()
+        if not inf:
+            raise HTTPException(404, "Influencer not found")
+        session.delete(inf)
+        audit.record("influencer_deleted", actor="dashboard", target=str(influencer_id))
+        return {"deleted": True, "id": influencer_id}
+
+
+@router.get("/influencers/{influencer_id}/voice-presets")
+async def get_voice_presets(influencer_id: int):
+    with get_session() as session:
+        presets = session.query(VoicePreset).filter_by(influencer_id=influencer_id).all()
+        return [
+            {
+                "id": p.id,
+                "name": p.name,
+                "tts_backend": p.tts_backend,
+                "voice_id": p.voice_id,
+                "language": p.language,
+                "speed": p.speed,
+                "pitch": p.pitch,
+                "is_default": p.is_default,
+            }
+            for p in presets
+        ]
+
+
+@router.post("/influencers/{influencer_id}/voice-presets")
+async def create_voice_preset(influencer_id: int, payload: dict = Body(...)):
+    with get_session() as session:
+        inf = session.query(Influencer).filter_by(id=influencer_id).first()
+        if not inf:
+            raise HTTPException(404, "Influencer not found")
+
+        preset = VoicePreset(
+            influencer_id=influencer_id,
+            name=payload.get("name", "Default"),
+            tts_backend=payload.get("tts_backend", "edge_tts"),
+            voice_id=payload.get("voice_id", ""),
+            language=payload.get("language", "en"),
+            speed=float(payload.get("speed", 1.0)),
+            pitch=float(payload.get("pitch", 1.0)),
+            is_default=bool(payload.get("is_default", False)),
+        )
+        session.add(preset)
+        session.flush()
+        return {"id": preset.id, "name": preset.name}
+
+
+@router.get("/influencers/{influencer_id}/social-connections")
+async def get_social_connections(influencer_id: int):
+    with get_session() as session:
+        connections = session.query(SocialConnection).filter_by(influencer_id=influencer_id).all()
+        return [
+            {
+                "id": c.id,
+                "platform": c.platform,
+                "account_name": c.account_name,
+                "account_id": c.account_id,
+                "status": c.status,
+                "last_error": c.last_error,
+                "connected_at": c.connected_at.isoformat() if c.connected_at else None,
+                "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+            }
+            for c in connections
+        ]
+
+
+@router.post("/influencers/{influencer_id}/social-connections")
+async def create_social_connection(influencer_id: int, payload: dict = Body(...)):
+    with get_session() as session:
+        inf = session.query(Influencer).filter_by(id=influencer_id).first()
+        if not inf:
+            raise HTTPException(404, "Influencer not found")
+
+        conn = SocialConnection(
+            influencer_id=influencer_id,
+            platform=payload.get("platform"),
+            account_name=payload.get("account_name"),
+            account_id=payload.get("account_id"),
+            access_token=payload.get("access_token"),
+            refresh_token=payload.get("refresh_token"),
+            credentials_json=json.dumps(payload.get("credentials", {})),
+            status=payload.get("status", "connected"),
+        )
+        session.add(conn)
+        session.flush()
+        return {"id": conn.id, "platform": conn.platform}
+
+
+@router.get("/influencers/{influencer_id}/calendar")
+async def get_influencer_calendar(influencer_id: int, status: Optional[str] = None):
+    with get_session() as session:
+        query = session.query(ContentCalendarEntry).filter_by(influencer_id=influencer_id).order_by(ContentCalendarEntry.scheduled_at.desc())
+        if status:
+            query = query.filter(ContentCalendarEntry.status == status)
+        return [
+            {
+                "id": c.id,
+                "title": c.title,
+                "description": c.description,
+                "content_type": c.content_type,
+                "status": c.status,
+                "scheduled_at": c.scheduled_at.isoformat() if c.scheduled_at else None,
+                "published_at": c.published_at.isoformat() if c.published_at else None,
+                "video_id": c.video_id,
+                "platforms": json.loads(c.platforms_json) if c.platforms_json else [],
+                "tags": c.tags,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+            }
+            for c in query.all()
+        ]
+
+
+@router.post("/influencers/{influencer_id}/calendar")
+async def create_calendar_entry(influencer_id: int, payload: dict = Body(...)):
+    with get_session() as session:
+        inf = session.query(Influencer).filter_by(id=influencer_id).first()
+        if not inf:
+            raise HTTPException(404, "Influencer not found")
+
+        entry = ContentCalendarEntry(
+            influencer_id=influencer_id,
+            title=payload.get("title"),
+            description=payload.get("description"),
+            content_type=payload.get("content_type", "video"),
+            status=payload.get("status", "draft"),
+            scheduled_at=datetime.fromisoformat(payload["scheduled_at"]) if payload.get("scheduled_at") else None,
+            video_id=payload.get("video_id"),
+            platforms_json=json.dumps(payload.get("platforms", [])),
+            tags=payload.get("tags"),
+        )
+        session.add(entry)
+        session.flush()
+        return {"id": entry.id, "title": entry.title, "status": entry.status}
+
+
+@router.get("/content-calendar")
+async def get_content_calendar(influencer_id: Optional[int] = Query(None), status: Optional[str] = Query(None)):
+    """List calendar entries, optionally filtered by influencer and status."""
+    with get_session() as session:
+        query = session.query(ContentCalendarEntry).order_by(ContentCalendarEntry.scheduled_at.desc())
+        if influencer_id is not None:
+            query = query.filter(ContentCalendarEntry.influencer_id == influencer_id)
+        if status:
+            query = query.filter(ContentCalendarEntry.status == status)
+        return [
+            {
+                "id": c.id,
+                "influencer_id": c.influencer_id,
+                "title": c.title,
+                "description": c.description,
+                "content_type": c.content_type,
+                "status": c.status,
+                "scheduled_at": c.scheduled_at.isoformat() if c.scheduled_at else None,
+                "published_at": c.published_at.isoformat() if c.published_at else None,
+                "video_id": c.video_id,
+                "platforms": json.loads(c.platforms_json) if c.platforms_json else [],
+                "tags": c.tags,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+            }
+            for c in query.all()
+        ]
 
 
 @router.get("/prompts/{account}")

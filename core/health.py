@@ -50,14 +50,36 @@ def health_snapshot() -> dict[str, Any]:
     if not snap["checks"]["ffmpeg"]["ok"]:
         snap["ok"] = False
 
+    # Ollama reachable
+    if settings.ollama_enabled:
+        try:
+            import httpx
+            with httpx.Client(timeout=5) as client:
+                r = client.get(settings.ollama_base_url + "/api/tags")
+                if r.status_code == 200:
+                    data = r.json()
+                    models = [m.get("name", "") for m in data.get("models", [])]
+                    snap["checks"]["ollama"] = {"ok": True, "models": models, "url": settings.ollama_base_url}
+                else:
+                    snap["checks"]["ollama"] = {"ok": False, "error": f"HTTP {r.status_code}", "url": settings.ollama_base_url}
+                    snap["ok"] = False
+        except Exception as e:
+            snap["checks"]["ollama"] = {"ok": False, "error": str(e)[:200], "url": settings.ollama_base_url}
+            snap["ok"] = False
+    else:
+        snap["checks"]["ollama"] = {"ok": None, "url": settings.ollama_base_url, "disabled": True}
+
     # Required secrets
     snap["checks"]["secrets"] = {
+        "ollama": bool(settings.ollama_enabled),
         "vertex_ai": bool(settings.vertex_ai_api_key),
         "discord_bot": bool(settings.discord_bot_token),
         "youtube_oauth": bool(settings.youtube_client_id and settings.youtube_client_secret),
         "drive": settings.enable_drive_upload and Path(settings.google_service_account_file).exists(),
     }
-    if not snap["checks"]["secrets"]["vertex_ai"]:
+    if settings.ollama_enabled:
+        pass
+    elif not snap["checks"]["secrets"]["vertex_ai"]:
         snap["ok"] = False
 
     # Disk

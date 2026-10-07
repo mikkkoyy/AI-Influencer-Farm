@@ -39,6 +39,7 @@ def init_db():
     from core.models import Base
     Base.metadata.create_all(bind=engine)
     _ensure_v12_schema()
+    _ensure_v13_schema()
     logger.info("Database initialized at %s", settings.db_path)
 
 
@@ -56,6 +57,16 @@ def _ensure_v12_schema() -> None:
             if column not in existing:
                 logger.info("Adding missing videos.%s column", column)
                 connection.execute(text(f"ALTER TABLE videos ADD COLUMN {column} {column_type}"))
+
+
+def _ensure_v13_schema() -> None:
+    """Add influencer columns for v1.3."""
+    with engine.begin() as connection:
+        rows = connection.execute(text("PRAGMA table_info(videos)")).fetchall()
+        existing = {row[1] for row in rows}
+        if "influencer_id" not in existing:
+            logger.info("Adding missing videos.influencer_id column")
+            connection.execute(text("ALTER TABLE videos ADD COLUMN influencer_id INTEGER"))
 
 
 @contextmanager

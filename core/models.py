@@ -12,6 +12,7 @@ class Video(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     account = Column(String(50), nullable=False, index=True)
+    influencer_id = Column(Integer, nullable=True, index=True)
     status = Column(String(30), nullable=False, default="pending")
     # Status values: pending, scripting, generating_video, generating_tts,
     # subtitling, compositing, reviewing, uploading_drive, publishing,
@@ -180,4 +181,162 @@ class VideoMetrics(Base):
     __table_args__ = (
         Index("idx_metrics_video_platform", "video_id", "platform"),
     )
+
+
+class Influencer(Base):
+    """Virtual AI influencer identity."""
+    __tablename__ = "influencers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False, unique=True)
+    display_name = Column(String(200))
+    slug = Column(String(100), nullable=False, unique=True, index=True)
+    niche = Column(String(50))               # technology, fitness, travel, fashion, gaming, education
+    bio = Column(Text)
+    personality = Column(Text)
+    target_audience = Column(Text)
+    visual_description = Column(Text)
+    profile_picture_path = Column(String(500))
+    reference_images_json = Column(Text)    # JSON list of paths
+    writing_style = Column(String(200))
+    preferred_language = Column(String(10), default="en")
+    status = Column(String(20), default="active")  # active, paused, archived
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_influencers_slug", "slug"),
+        Index("idx_influencers_niche", "niche"),
+    )
+
+    def __repr__(self):
+        return f"<Influencer {self.id} [{self.slug}] {self.display_name or self.name}>"
+
+
+class VoicePreset(Base):
+    """Per-influencer voice configuration."""
+    __tablename__ = "voice_presets"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    influencer_id = Column(Integer, nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    tts_backend = Column(String(50), default="edge_tts")   # edge_tts, piper, elevenlabs
+    voice_id = Column(String(200))                          # e.g. "en-US-JennyNeural"
+    language = Column(String(10), default="en")
+    speed = Column(Float, default=1.0)
+    pitch = Column(Float, default=1.0)
+    is_default = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<VoicePreset {self.id} [{self.influencer_id}] {self.name}>"
+
+
+class SocialConnection(Base):
+    """Social media account linked to an influencer."""
+    __tablename__ = "social_connections"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    influencer_id = Column(Integer, nullable=False, index=True)
+    platform = Column(String(30), nullable=False)   # tiktok, youtube, instagram, facebook
+    account_name = Column(String(200))
+    account_id = Column(String(200))
+    access_token = Column(String(500))
+    refresh_token = Column(String(500))
+    token_expires_at = Column(DateTime)
+    credentials_json = Column(Text)                 # JSON blob for platform-specific data
+    status = Column(String(30), default="connected") # connected, expired, error, disconnected
+    last_error = Column(Text)
+    connected_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_social_influencer_platform", "influencer_id", "platform"),
+    )
+
+    def __repr__(self):
+        return f"<SocialConnection {self.id} [{self.influencer_id}:{self.platform}] {self.account_name}>"
+
+
+class ContentCalendarEntry(Base):
+    """Calendar entry for content planning and scheduling."""
+    __tablename__ = "content_calendar"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    influencer_id = Column(Integer, nullable=False, index=True)
+    title = Column(String(500))
+    description = Column(Text)
+    content_type = Column(String(50))            # video, image, carousel, story
+    status = Column(String(30), default="draft") # draft, approved, scheduled, publishing, published, failed, cancelled
+    scheduled_at = Column(DateTime, index=True)
+    published_at = Column(DateTime)
+    video_id = Column(Integer, index=True)       # linked video if already produced
+    platforms_json = Column(Text)                # JSON list of target platforms
+    tags = Column(String(300))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_calendar_influencer_status", "influencer_id", "status"),
+        Index("idx_calendar_scheduled_at", "scheduled_at"),
+    )
+
+    def __repr__(self):
+        return f"<ContentCalendarEntry {self.id} [{self.influencer_id}] {self.status} {self.title}>"
+
+
+class ImageGenerationHistory(Base):
+    """Track generated images for reference and audit."""
+    __tablename__ = "image_generation_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    influencer_id = Column(Integer, nullable=True, index=True)
+    prompt = Column(Text, nullable=False)
+    negative_prompt = Column(Text)
+    image_path = Column(String(500), nullable=False)
+    backend = Column(String(50))                 # comfyui, automatic1111, dall_e, imagen
+    width = Column(Integer)
+    height = Column(Integer)
+    steps = Column(Integer)
+    cfg_scale = Column(Float)
+    seed = Column(Integer)
+    generation_time_ms = Column(Integer)
+    is_reference = Column(Boolean, default=False)
+    is_accepted = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_image_history_influencer", "influencer_id"),
+    )
+
+    def __repr__(self):
+        return f"<ImageGenerationHistory {self.id} [{self.backend}] {self.image_path}>"
+
+
+class AnalyticsSnapshot(Base):
+    """Daily/weekly/monthly analytics snapshots per influencer."""
+    __tablename__ = "analytics_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    influencer_id = Column(Integer, nullable=False, index=True)
+    platform = Column(String(30), nullable=False)
+    date = Column(DateTime, nullable=False, index=True)
+    period = Column(String(20), default="daily")  # daily, weekly, monthly
+    views = Column(Integer, default=0)
+    likes = Column(Integer, default=0)
+    comments = Column(Integer, default=0)
+    shares = Column(Integer, default=0)
+    followers = Column(Integer, default=0)
+    engagement_rate = Column(Float)
+    source = Column(String(30), default="api")    # api, manual, import
+    raw_json = Column(Text)                       # raw platform response for audit
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_analytics_influencer_platform_date", "influencer_id", "platform", "date"),
+    )
+
+    def __repr__(self):
+        return f"<AnalyticsSnapshot {self.id} [{self.influencer_id}:{self.platform}] {self.date}>"
 

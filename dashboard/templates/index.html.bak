@@ -413,7 +413,7 @@
             try {
                 const [versionRes, healthRes, statsRes, videosRes, keysRes, emailsRes,
                        auditRes, providersRes, tsRes, platformRegistryRes, platformConfigRes,
-                       accountsRes, influencersRes] = await Promise.all([
+                       accountsRes] = await Promise.all([
                     authFetch('/version'),
                     authFetch('/health'),
                     authFetch('/api/stats'),
@@ -426,7 +426,6 @@
                     authFetch('/api/platform-registry'),
                     authFetch('/api/platforms'),
                     authFetch('/api/accounts'),
-                    authFetch('/api/influencers'),
                 ]);
 
                 if (statsRes.status === 401 || statsRes.status === 403) {
@@ -448,7 +447,6 @@
                 const platformRegistry = await platformRegistryRes.json().catch(() => ({}));
                 const platformConfig = await platformConfigRes.json().catch(() => ({}));
                 const accounts = await accountsRes.json().catch(() => ({}));
-                const influencers = await influencersRes.json().catch(() => []);
 
                 document.getElementById('version-tag').textContent = ver.version ? `v${ver.version}` : '';
                 const pill = document.getElementById('health-pill');
@@ -594,78 +592,7 @@
             }
         }
 
-        // ----- Influencers -----
-        let allInfluencers = [];
-        async function loadInfluencers() {
-            const res = await authFetch('/api/influencers');
-            allInfluencers = await res.json().catch(() => []);
-            const tbody = document.getElementById('influencers-table');
-            if (!tbody) return;
-            tbody.innerHTML = allInfluencers.map(inf => `<tr>
-                <td>${inf.id}</td><td>${inf.name}</td><td>${inf.slug}</td><td>${inf.niche || '-'}</td><td>${inf.preferred_language}</td><td>${inf.status}</td><td>${formatDate(inf.created_at)}</td>
-            </tr>`).join('') || '<tr><td colspan="7" style="color:#888">No influencers yet.</td></tr>';
-
-            const grid = document.getElementById('influencer-grid');
-            if (grid) {
-                grid.innerHTML = allInfluencers.map(inf => `<div class="card">
-                    <div class="stat-value" style="font-size:20px">${inf.display_name || inf.name}</div>
-                    <div class="stat-label">${inf.niche || 'No niche'} · ${inf.preferred_language} · ${inf.status}</div>
-                </div>`).join('') || '<p style="color:#888">No influencers yet.</p>';
-            }
-
-            const sel = document.getElementById('cal-influencer');
-            if (sel) {
-                const cur = sel.value;
-                sel.innerHTML = '<option value="">All</option>' + allInfluencers.map(i => `<option value="${i.id}">${i.display_name || i.name}</option>`).join('');
-                sel.value = cur;
-            }
-        }
-        document.addEventListener('DOMContentLoaded', () => {
-            document.getElementById('inf-create').addEventListener('click', async () => {
-                const name = document.getElementById('inf-name').value.trim();
-                const slug = document.getElementById('inf-slug').value.trim();
-                if (!name || !slug) { alert('Name and slug are required'); return; }
-                const payload = {
-                    name,
-                    slug,
-                    display_name: document.getElementById('inf-display').value.trim(),
-                    niche: document.getElementById('inf-niche').value.trim(),
-                    preferred_language: document.getElementById('inf-language').value.trim() || 'en',
-                };
-                const r = await authFetch('/api/influencers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                if (!r.ok) { alert('Error creating influencer'); return; }
-                document.getElementById('inf-name').value = '';
-                document.getElementById('inf-slug').value = '';
-                document.getElementById('inf-display').value = '';
-                document.getElementById('inf-niche').value = '';
-                loadInfluencers();
-            });
-        });
-
-        // ----- Calendar -----
-        async function loadCalendar() {
-            const influencerId = document.getElementById('cal-influencer')?.value || '';
-            const status = document.getElementById('cal-status')?.value || '';
-            let url = '/api/content-calendar';
-            const params = [];
-            if (influencerId) params.push(`influencer_id=${influencerId}`);
-            if (status) params.push(`status=${status}`);
-            if (params.length) url += '?' + params.join('&');
-            const res = await authFetch(url);
-            const entries = await res.json().catch(() => []);
-            const tbody = document.getElementById('calendar-table');
-            if (!tbody) return;
-            tbody.innerHTML = entries.map(c => `<tr>
-                <td>${c.id}</td><td>${c.influencer_id}</td><td>${c.title || '-'}</td><td>${c.content_type || '-'}</td><td>${c.status}</td><td>${formatDate(c.scheduled_at)}</td><td>${(c.platforms || []).join(', ') || '-'}</td>
-            </tr>`).join('') || '<tr><td colspan="7" style="color:#888">No calendar entries.</td></tr>';
-        }
-        document.addEventListener('DOMContentLoaded', () => {
-            document.getElementById('cal-refresh')?.addEventListener('click', loadCalendar);
-        });
-
         loadData();
-        loadInfluencers();
-        loadCalendar();
         setInterval(loadData, 60000);
     </script>
 </body>
