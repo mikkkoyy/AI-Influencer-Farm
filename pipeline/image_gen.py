@@ -52,6 +52,25 @@ def _post_json(base_url: str, path: str, payload: dict, timeout: float = _DEFAUL
         return response.json()
 
 
+def _post_multipart(base_url: str, path: str, files: dict, data: dict, timeout: float = _DEFAULT_TIMEOUT) -> dict:
+    url = f"{base_url}{path}"
+    with httpx.Client(timeout=timeout) as client:
+        response = client.post(url, files=files, data=data)
+        response.raise_for_status()
+        return response.json()
+
+
+def _upload_comfyui_image(base_url: str, image_path: str) -> dict:
+    """Upload an image to ComfyUI's input directory."""
+    image_file = Path(image_path)
+    if not image_file.exists():
+        raise FileNotFoundError(f"Reference image not found: {image_path}")
+    with image_file.open("rb") as fh:
+        files = {"image": (image_file.name, fh, "application/octet-stream")}
+        data = {"overwrite": "true"}
+        return _post_multipart(base_url, "/upload/image", files=files, data=data)
+
+
 def _get_bytes(base_url: str, path: str, timeout: float = _DEFAULT_TIMEOUT) -> bytes:
     url = f"{base_url}{path}"
     with httpx.Client(timeout=timeout) as client:
@@ -71,10 +90,58 @@ def _comfyui_workflow(
     sampler: str = "euler",
     scheduler: str = "normal",
     model: str = "",
+    reference_image_path: str = "",
 ) -> dict:
-    """Build a minimal ComfyUI API workflow for txt2img."""
+    """Build a minimal ComfyUI API workflow for txt2img or img2img."""
     if seed == -1:
         seed = int(time.time() * 1000) % (2**32)
+
+    if reference_image_path:
+        return {
+            "1": {
+                "class_type": "LoadImage",
+                "inputs": {"image": Path(reference_image_path).name},
+            },
+            "2": {
+                "class_type": "VAEEncode",
+                "inputs": {"pixels": ["1", 0], "vae": ["4", 2]},
+            },
+            "3": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "seed": seed,
+                    "steps": steps,
+                    "cfg": cfg_scale,
+                    "sampler_name": sampler,
+                    "scheduler": scheduler,
+                    "denoise": 0.6,
+                    "model": ["4", 0],
+                    "positive": ["6", 0],
+                    "negative": ["7", 0],
+                    "latent_image": ["2", 0],
+                },
+            },
+            "4": {
+                "class_type": "CheckpointLoaderSimple",
+                "inputs": {"ckpt_name": model or "v1-5-pruned-emaonly.safetensors"},
+            },
+            "6": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": prompt, "clip": ["4", 1]},
+            },
+            "7": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": negative_prompt or "bad quality, blurry, distorted", "clip": ["4", 1]},
+            },
+            "8": {
+                "class_type": "VAEDecode",
+                "inputs": {"samples": ["3", 0], "vae": ["4", 2]},
+            },
+            "9": {
+                "class_type": "SaveImage",
+                "inputs": {"filename_prefix": "AI-Influencer-Farm", "images": ["8", 0]},
+            },
+        }
 
     return {
         "3": {
@@ -94,45 +161,27 @@ def _comfyui_workflow(
         },
         "4": {
             "class_type": "CheckpointLoaderSimple",
-            "inputs": {
-                "ckpt_name": model or "v1-5-pruned-emaonly.safetensors",
-            },
+            "inputs": {"ckpt_name": model or "v1-5-pruned-emaonly.safetensors"},
         },
         "5": {
             "class_type": "EmptyLatentImage",
-            "inputs": {
-                "width": width,
-                "height": height,
-                "batch_size": 1,
-            },
+            "inputs": {"width": width, "height": height, "batch_size": 1},
         },
         "6": {
             "class_type": "CLIPTextEncode",
-            "inputs": {
-                "text": prompt,
-                "clip": ["4", 1],
-            },
+            "inputs": {"text": prompt, "clip": ["4", 1]},
         },
         "7": {
             "class_type": "CLIPTextEncode",
-            "inputs": {
-                "text": negative_prompt or "bad quality, blurry, distorted",
-                "clip": ["4", 1],
-            },
+            "inputs": {"text": negative_prompt or "bad quality, blurry, distorted", "clip": ["4", 1]},
         },
         "8": {
             "class_type": "VAEDecode",
-            "inputs": {
-                "samples": ["3", 0],
-                "vae": ["4", 2],
-            },
+            "inputs": {"samples": ["3", 0], "vae": ["4", 2]},
         },
         "9": {
             "class_type": "SaveImage",
-            "inputs": {
-                "filename_prefix": "AI-Influencer-Farm",
-                "images": ["8", 0],
-            },
+            "inputs": {"filename_prefix": "AI-Influencer-Farm", "images": ["8", 0]},
         },
     }
 
@@ -147,9 +196,15 @@ def generate_image_comfyui(
     seed: int = -1,
     model: str = "",
     influencer_id: Optional[int] = None,
+    reference_image_path: str = "",
 ) -> str:
     """Generate an image using ComfyUI and return the local file path."""
     base_url = _comfyui_base_url()
+
+    if reference_image_path:
+        logger.info("Uploading reference image to ComfyUI: %s", reference_image_path)
+        _upload_comfyui_image(base_url, reference_image_path)
+
     workflow = _comfyui_workflow(
         prompt=prompt,
         negative_prompt=negative_prompt,
@@ -159,6 +214,7 @@ def generate_image_comfyui(
         cfg_scale=cfg_scale,
         seed=seed,
         model=model,
+        reference_image_path=reference_image_path,
     )
 
     logger.info("Submitting ComfyUI workflow to %s", base_url)
@@ -234,6 +290,7 @@ def generate_image_a1111(
     sampler_name: str = "Euler a",
     model: str = "",
     influencer_id: Optional[int] = None,
+    reference_image_path: str = "",
 ) -> str:
     """Generate an image using AUTOMATIC1111 Stable Diffusion WebUI and return the local file path."""
     base_url = _a1111_base_url()
@@ -250,6 +307,12 @@ def generate_image_a1111(
     }
     if model:
         payload["override_settings"] = {"sd_model_checkpoint": model}
+
+    if reference_image_path:
+        ref_path = Path(reference_image_path)
+        if not ref_path.exists():
+            raise FileNotFoundError(f"Reference image not found: {reference_image_path}")
+        payload["init_images"] = [ref_path.read_bytes()]
 
     logger.info("Submitting A1111 txt2img to %s", base_url)
     response = _post_json(base_url, "/sdapi/v1/txt2img", payload)
@@ -280,6 +343,7 @@ def generate_image(
     seed: int = -1,
     model: str = "",
     influencer_id: Optional[int] = None,
+    reference_image_path: str = "",
 ) -> str:
     """Generate an image using the specified local backend.
 
@@ -298,6 +362,7 @@ def generate_image(
             seed=seed,
             model=model,
             influencer_id=influencer_id,
+            reference_image_path=reference_image_path,
         )
     if backend in {"a1111", "automatic1111", "stable-diffusion-webui"}:
         return generate_image_a1111(
@@ -310,6 +375,7 @@ def generate_image(
             seed=seed,
             model=model,
             influencer_id=influencer_id,
+            reference_image_path=reference_image_path,
         )
     raise ValueError(f"Unsupported image generation backend: {backend}")
 

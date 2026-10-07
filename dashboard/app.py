@@ -38,6 +38,16 @@ static_dir = Path(__file__).parent / "static"
 static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+# Mount generated images for preview
+generated_dir = Path(settings.db_path).parent / "generated-images"
+generated_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/generated-images", StaticFiles(directory=str(generated_dir)), name="generated-images")
+
+# Mount reference images
+reference_dir = Path(settings.db_path).parent / "reference-images"
+reference_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/reference-images", StaticFiles(directory=str(reference_dir)), name="reference-images")
+
 # Include API routes (gated by optional API-key auth)
 app.include_router(router, prefix="/api", dependencies=[Depends(require_api_key)])
 

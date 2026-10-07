@@ -1,9 +1,10 @@
 import json
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, HTTPException, Query, Body, UploadFile, File, Form
 from sqlalchemy import func, case
 
 from core.db import get_session
@@ -979,6 +980,7 @@ async def generate_image(payload: dict = Body(...)):
     seed = int(payload.get("seed", -1))
     model = payload.get("model", "")
     influencer_id = payload.get("influencer_id")
+    reference_image_path = payload.get("reference_image_path", "")
 
     if not prompt:
         raise HTTPException(400, "Prompt is required")
@@ -995,6 +997,7 @@ async def generate_image(payload: dict = Body(...)):
             seed=seed,
             model=model,
             influencer_id=influencer_id,
+            reference_image_path=reference_image_path,
         )
     except Exception as exc:
         audit.record("image_generation_failed", actor="dashboard", target=backend, details={"error": str(exc)[:200]})
@@ -1012,13 +1015,46 @@ async def generate_image(payload: dict = Body(...)):
             steps=steps,
             cfg_scale=cfg_scale,
             seed=seed if seed != -1 else None,
+            is_reference=bool(reference_image_path),
             is_accepted=True,
         )
         session.add(record)
         session.flush()
-        audit.record("image_generated", actor="dashboard", target=str(record.id), details={"backend": backend, "path": path})
+        audit.record("image_generated", actor="dashboard", target=str(record.id), details={"backend": backend, "path": path, "reference": bool(reference_image_path)})
 
     return {"path": path, "id": record.id}
+
+
+@router.post("/image-generation/reference-image")
+async def upload_reference_image(file: UploadFile = File(...), influencer_id: Optional[int] = Form(None)):
+    """Upload a reference image for an influencer."""
+    allowed = {"image/png", "image/jpeg", "image/webp", "image/jpg"}
+    if file.content_type not in allowed:
+        raise HTTPException(400, f"Unsupported file type: {file.content_type}")
+
+    ref_dir = Path(settings.db_path).parent / "reference-images"
+    ref_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = f"ref_{int(time.time()*1000)}_{file.filename.replace('/', '_').replace('\\', '_')}"
+    dest = ref_dir / safe_name
+    try:
+        dest.write_bytes(file.file.read())
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to save reference image: {exc}")
+
+    with get_session() as session:
+        record = ImageGenerationHistory(
+            influencer_id=influencer_id,
+            prompt=f"Reference image: {file.filename}",
+            image_path=str(dest),
+            backend="reference",
+            is_reference=True,
+            is_accepted=True,
+        )
+        session.add(record)
+        session.flush()
+        audit.record("reference_image_uploaded", actor="dashboard", target=str(record.id), details={"filename": file.filename, "influencer_id": influencer_id})
+
+    return {"path": str(dest), "id": record.id, "url": f"/reference-images/{safe_name}"}
 
 
 @router.get("/image-generation/history")

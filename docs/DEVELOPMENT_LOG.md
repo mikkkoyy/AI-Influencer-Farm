@@ -178,20 +178,82 @@ Implement video production pipeline (FFmpeg rendering, narration, subtitles).
 
 ### Test Results
 - PASS: 24/24 total tests
-- BLOCKED: GitHub push (no authentication)
+- PASS: Dashboard app loads successfully
 
 ### Commit Hashes
 - f196bbc
 - 05ef747
+- 76cd979
 
 ### GitHub Push Status
-**BLOCKED** — Repository not found. Target repository must be created and authentication configured.
+**PUSHED** — All 6 local commits successfully pushed to `origin/main` on 2026-10-07. Repository `mikkkoyy/AI-Influencer-Farm` exists and is accessible via `gh` CLI.
 
 ### Outstanding Issues
-1. GitHub authentication required for push
-2. ComfyUI/A1111 not installed locally
-3. Reference image support not implemented
-4. Image preview uses placeholder
+1. ComfyUI/A1111 not installed locally
+2. Reference image support not implemented
+3. Image preview uses placeholder
 
 ### Recommended Next Task
 Finalize packaging, documentation, and acceptance verification.
+
+---
+
+## Entry 4 — Complete Image Studio with Reference Images & Static Serving
+
+**Date:** 2026-10-07  
+**Task:** Complete Image Studio — real backend integration, reference-image upload, actual previews, persisted metadata  
+**Branch:** main  
+**Commit:** *(pending)*
+
+### Implementation Summary
+- Added static file mounts for `/generated-images` and `/reference-images` in `dashboard/app.py`
+- Added `POST /api/image-generation/reference-image` endpoint for uploading reference images
+- Updated `POST /api/image-generation/generate` to accept `reference_image_path`
+- Updated `pipeline/image_gen.py`:
+  - Added `_upload_comfyui_image` helper for uploading reference images to ComfyUI
+  - Updated `_comfyui_workflow` to build img2img-style workflow when reference image is provided
+  - Updated `generate_image_comfyui` to upload reference images before submitting workflow
+  - Updated `generate_image_a1111` to send `init_images` when reference image is provided
+  - Updated `generate_image` dispatcher to pass `reference_image_path` through
+- Updated `dashboard/templates/index.html`:
+  - Added reference image file input to Image Studio
+  - Replaced placeholder with actual generated-image previews using `/generated-images/` and `/reference-images/` URLs
+  - Added upload-and-attach reference image workflow before generation
+  - Marked reference images with "REF" badge and generated images with "GEN" badge
+- Added tests:
+  - `test_comfyui_workflow_with_reference_image` — verifies img2img workflow nodes
+  - `test_generate_image_comfyui_with_reference` — verifies upload call and success path
+  - `test_generate_image_a1111_with_reference` — verifies `init_images` payload
+- Installed `python-multipart` for FastAPI file upload support
+- All 27 tests pass
+
+### Files Changed
+- `dashboard/app.py` — Mounted `/generated-images` and `/reference-images` static dirs
+- `dashboard/routes.py` — Added reference image upload endpoint, updated generate endpoint
+- `pipeline/image_gen.py` — Reference image support for ComfyUI and A1111
+- `dashboard/templates/index.html` — Real image previews, reference image upload UI
+- `tests/test_image_generation.py` — 3 new tests (11 total)
+- `.venv/` — Installed `python-multipart`
+
+### Tests Performed
+- `pytest tests/test_image_generation.py` — 11 passed
+- `pytest tests/` — 27 passed, 1 warning
+- Dashboard app load — PASS
+
+### Test Results
+- PASS: 27/27 total tests
+- PASS: Dashboard app loads successfully
+
+### Commit Hash
+*(pending)*
+
+### GitHub Push Status
+*(pending)*
+
+### Outstanding Issues
+1. ComfyUI/A1111 not installed locally — integration tested with mocks only
+2. Reference image processing in ComfyUI requires IP-Adapter or VAEEncode path; current implementation uses img2img-style workflow
+3. Image preview requires backend to be running and generating actual images
+
+### Recommended Next Task
+Add integration test for real backend detection and verify end-to-end with actual ComfyUI/A1111 instance.

@@ -202,6 +202,7 @@
                     <input id="img-steps" type="number" value="30" placeholder="Steps" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
                     <input id="img-cfg" type="number" value="7.0" step="0.1" placeholder="CFG" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
                     <input id="img-influencer" type="number" placeholder="Influencer ID" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                    <input id="img-reference" type="file" accept="image/png,image/jpeg,image/webp" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
                     <button id="img-generate" class="btn btn-primary">Generate</button>
                 </div>
                 <div id="img-status" style="margin-top:10px;color:#888;font-size:12px"></div>
@@ -916,29 +917,26 @@
             const items = await res.json().catch(() => []);
             const container = document.getElementById('img-history');
             if (!container) return;
-            container.innerHTML = items.map(img => `
+            container.innerHTML = items.map(img => {
+                const src = img.image_path.startsWith('http') ? img.image_path : img.image_path;
+                const displaySrc = img.is_reference ? src : (src.startsWith('/') ? src : `/generated-images/${Path.basename(src)}`);
+                return `
                 <div style="background:#222;border-radius:6px;overflow:hidden">
-                    <img src="/static/placeholder.png" data-path="${img.image_path}" style="width:100%;height:200px;object-fit:cover;background:#333" onerror="this.style.display='none'">
-                    <div style="padding:8px;font-size:12px;color:#aaa">${img.backend} · ${img.width}x${img.height} · ${img.created_at ? formatDate(img.created_at) : ''}</div>
-                </div>
-            `).join('') || '<p style="color:#888">No images generated yet.</p>';
-            try {
-                const imgs = container.querySelectorAll('img[data-path]');
-                for (const img of imgs) {
-                    const path = img.getAttribute('data-path');
-                    if (path && path.startsWith('http')) {
-                        img.src = path;
-                    } else if (path) {
-                        const r = await fetch(path);
-                        if (r.ok) {
-                            const blob = await r.blob();
-                            img.src = URL.createObjectURL(blob);
-                        }
-                    }
-                }
-            } catch (e) {
-                console.error('Image load error:', e);
-            }
+                    <img src="${displaySrc}" style="width:100%;height:200px;object-fit:cover;background:#333" onerror="this.src='/static/placeholder.png'">
+                    <div style="padding:8px;font-size:12px;color:#aaa">${img.backend} · ${img.width}x${img.height} · ${img.is_reference ? 'REF' : 'GEN'} · ${img.created_at ? formatDate(img.created_at) : ''}</div>
+                </div>`;
+            }).join('') || '<p style="color:#888">No images generated yet.</p>';
+        }
+        async function uploadReferenceImage(file) {
+            if (!file) return null;
+            const form = new FormData();
+            form.append('file', file);
+            const influencerId = document.getElementById('img-influencer').value;
+            if (influencerId) form.append('influencer_id', influencerId);
+            const r = await authFetch('/api/image-generation/reference-image', { method: 'POST', body: form });
+            if (!r.ok) { const err = await r.json().catch(() => ({})); alert('Reference upload failed: ' + (err.detail || JSON.stringify(err))); return null; }
+            const data = await r.json();
+            return data.url || data.path;
         }
         document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('img-generate')?.addEventListener('click', async () => {
@@ -954,12 +952,19 @@
                     cfg_scale: parseFloat(document.getElementById('img-cfg').value) || 7.0,
                     influencer_id: parseInt(document.getElementById('img-influencer').value) || null,
                 };
+                const refFile = document.getElementById('img-reference').files[0];
+                if (refFile) {
+                    const refUrl = await uploadReferenceImage(refFile);
+                    if (refUrl) payload.reference_image_path = refUrl;
+                }
                 if (!payload.prompt) { alert('Prompt is required'); return; }
                 const r = await authFetch('/api/image-generation/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                 if (!r.ok) { const err = await r.json().catch(() => ({})); alert('Error: ' + (err.detail || JSON.stringify(err))); if (status) status.textContent = ''; return; }
                 const data = await r.json();
                 if (status) status.textContent = 'Saved: ' + data.path;
                 document.getElementById('img-prompt').value = '';
+                document.getElementById('img-negative').value = '';
+                document.getElementById('img-reference').value = '';
                 loadImageHistory();
             });
             document.getElementById('img-refresh-backends')?.addEventListener('click', loadImageBackends);

@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -26,6 +27,26 @@ def test_comfyui_workflow_contains_expected_nodes():
     assert "9" in workflow
     assert workflow["3"]["class_type"] == "KSampler"
     assert workflow["4"]["inputs"]["ckpt_name"] == "test_model.safetensors"
+
+
+def test_comfyui_workflow_with_reference_image():
+    workflow = image_gen._comfyui_workflow(
+        prompt="test prompt",
+        negative_prompt="bad quality",
+        width=512,
+        height=768,
+        steps=20,
+        cfg_scale=6.5,
+        seed=42,
+        model="test_model.safetensors",
+        reference_image_path="storage/reference-images/ref_test.png",
+    )
+    assert "1" in workflow
+    assert "2" in workflow
+    assert workflow["1"]["class_type"] == "LoadImage"
+    assert workflow["2"]["class_type"] == "VAEEncode"
+    assert workflow["3"]["inputs"]["latent_image"] == ["2", 0]
+    assert workflow["3"]["inputs"]["denoise"] == 0.6
 
 
 def test_comfyui_workflow_defaults():
@@ -189,4 +210,107 @@ def test_generate_image_a1111_success(monkeypatch, tmp_path):
 
     monkeypatch.setattr(image_gen.httpx, "Client", lambda timeout=None: FakeClient())
     path = image_gen.generate_image_a1111(prompt="a dog", width=512, height=768)
+    assert path.endswith(".png")
+
+
+def test_generate_image_comfyui_with_reference(monkeypatch, tmp_path):
+    db_path = tmp_path / "storage" / "viralstack.db"
+    monkeypatch.setattr(image_gen.settings, "db_path", str(db_path))
+
+    ref_dir = tmp_path / "reference-images"
+    ref_dir.mkdir(parents=True, exist_ok=True)
+    ref_file = ref_dir / "ref.png"
+    ref_file.write_bytes(b"REFDATA")
+
+    upload_called = False
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {"prompt_id": "abc123"}
+        def raise_for_status(self):
+            pass
+
+    class FakeHistoryResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "abc123": {
+                    "status": {"completed": True, "status_str": "success"},
+                    "outputs": {
+                        "9": {"images": [{"filename": "out.png", "subfolder": "", "type": "output"}]}
+                    },
+                }
+            }
+        def raise_for_status(self):
+            pass
+
+    class FakeImageResponse:
+        status_code = 200
+        def __init__(self, content):
+            self._content = content
+            self.content = content
+        def read(self):
+            return self._content
+        def raise_for_status(self):
+            pass
+
+    class FakeClient:
+        def __init__(self, timeout=None):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def post(self, url, json=None, timeout=None, files=None, data=None):
+            nonlocal upload_called
+            if url.endswith("/upload/image"):
+                upload_called = True
+                return FakeResponse()
+            if url.endswith("/prompt"):
+                return FakeResponse()
+            if "/history/" in url:
+                return FakeHistoryResponse()
+            raise RuntimeError(f"unexpected post: {url}")
+        def get(self, url, timeout=None):
+            if "/view?" in url:
+                return FakeImageResponse(b"PNGDATA")
+            raise RuntimeError(f"unexpected get: {url}")
+
+    monkeypatch.setattr(image_gen.httpx, "Client", lambda timeout=None: FakeClient())
+    path = image_gen.generate_image_comfyui(prompt="a cat", reference_image_path=str(ref_file))
+    assert path.endswith(".png")
+    assert upload_called is True
+
+
+def test_generate_image_a1111_with_reference(monkeypatch, tmp_path):
+    db_path = tmp_path / "storage" / "viralstack.db"
+    monkeypatch.setattr(image_gen.settings, "db_path", str(db_path))
+
+    ref_dir = tmp_path / "reference-images"
+    ref_dir.mkdir(parents=True, exist_ok=True)
+    ref_file = ref_dir / "ref.png"
+    ref_file.write_bytes(b"REFDATA")
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {"images": [b"PNGDATA1111"]}
+        def raise_for_status(self):
+            pass
+
+    class FakeClient:
+        def __init__(self, timeout=None):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def post(self, url, json=None, timeout=None, files=None, data=None):
+            assert "/sdapi/v1/txt2img" in url
+            assert "init_images" in json
+            return FakeResponse()
+
+    monkeypatch.setattr(image_gen.httpx, "Client", lambda timeout=None: FakeClient())
+    path = image_gen.generate_image_a1111(prompt="a dog", reference_image_path=str(ref_file))
     assert path.endswith(".png")
