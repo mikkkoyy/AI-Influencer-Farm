@@ -105,16 +105,31 @@ SCRIPT_PROVIDER_CHAIN=ollama
 
 For local image generation, install one of:
 
-- [AUTOMATIC1111 Stable Diffusion WebUI](https://github.com/AUTOMATIC1111/stable-diffusion-webui)
-- [ComfyUI](https://github.com/comfyanonymous/ComfyUI)
+**ComfyUI (recommended for advanced workflows):**
+1. Clone ComfyUI: `git clone https://github.com/comfyanonymous/ComfyUI.git`
+2. Install dependencies: `pip install -r ComfyUI/requirements.txt`
+3. Download a Stable Diffusion model (e.g., `v1-5-pruned-emaonly.safetensors`) to `ComfyUI/models/checkpoints/`
+4. Start ComfyUI: `python main.py --listen 127.0.0.1 --port 8188`
+
+**AUTOMATIC1111 Stable Diffusion WebUI:**
+1. Clone the repository: `git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git`
+2. Run `webui.bat` and wait for it to start
+3. The API will be available at `http://127.0.0.1:7860`
 
 Then configure in `.env`:
 
 ```env
-IMAGE_GEN_BASE_URL=http://localhost:7860  # AUTOMATIC1111
-# or
 IMAGE_GEN_BASE_URL=http://localhost:8188  # ComfyUI
+# or
+IMAGE_GEN_BASE_URL=http://localhost:7860  # AUTOMATIC1111
 ```
+
+**IP-Adapter Support (ComfyUI only, optional):**
+1. Install the [ComfyUI IP-Adapter custom nodes](https://github.com/cubiq/ComfyUI_IPAdapter_plus)
+2. Download an IP-Adapter model (e.g., `ip-adapter-plus_sd15.bin`) to `ComfyUI/models/ipadapter/`
+3. Enable IP-Adapter in the Image Studio dashboard
+
+**Note:** No models are downloaded automatically. You must manually place model files in the appropriate directories.
 
 ### Voice Generation
 

@@ -245,10 +245,10 @@ Finalize packaging, documentation, and acceptance verification.
 - PASS: Dashboard app loads successfully
 
 ### Commit Hash
-*(pending)*
+c732be2
 
 ### GitHub Push Status
-*(pending)*
+**PUSHED** — Commit c732be2 successfully pushed to `origin/main` on 2026-10-07.
 
 ### Outstanding Issues
 1. ComfyUI/A1111 not installed locally — integration tested with mocks only
@@ -257,3 +257,78 @@ Finalize packaging, documentation, and acceptance verification.
 
 ### Recommended Next Task
 Add integration test for real backend detection and verify end-to-end with actual ComfyUI/A1111 instance.
+
+---
+
+## Entry 5 — Verify Real Image Generation
+
+**Date:** 2026-10-07  
+**Task:** Complete and verify real image generation — backend detection, reference images, IP-Adapter support, security, tests  
+**Branch:** main  
+**Commit:** *(pending)*
+
+### Implementation Summary
+- Added `detect_local_backends()` in `pipeline/image_gen.py` for auto-detecting ComfyUI and A1111 installations
+- Enhanced `_comfyui_workflow` with optional IP-Adapter support (requires custom nodes, falls back to img2img)
+- Updated `generate_image_comfyui` to upload reference images before workflow submission
+- Added `generation_time_ms` tracking in both ComfyUI and A1111 generators
+- Fixed pre-existing bug: `except Exception: pass` in ComfyUI polling loop was swallowing generation failures
+- Added `import pipeline.image_gen` to `dashboard/routes.py` (was missing, causing NameError)
+- Enhanced reference image upload endpoint with:
+  - PIL-based image validation
+  - 10 MB file size limit
+  - Safe filename sanitization
+- Added `/api/image-generation/detect` endpoint
+- Updated dashboard Image Studio with Auto-Detect button and IP-Adapter controls
+- Added comprehensive test coverage:
+  - `test_detect_local_backends` — backend auto-detection
+  - `test_comfyui_workflow_with_ip_adapter` — IP-Adapter workflow nodes
+  - `test_generate_image_comfyui_timeout` — timeout handling
+  - `test_generate_image_comfyui_failed_status` — failed generation propagation
+  - `test_generate_image_a1111_no_images` — empty response handling
+  - `test_upload_reference_image_success` — valid upload
+  - `test_upload_reference_image_invalid_type` — type validation
+  - `test_upload_reference_image_too_large` — size validation
+  - `test_list_image_backends` — health check endpoint
+  - `test_detect_backends` — detection endpoint
+  - `test_generate_image_requires_prompt` — input validation
+  - `test_generate_image_invalid_backend` — unsupported backend error
+  - `test_image_history_endpoint` — history retrieval
+- Added `tests/test_image_generation_api.py` with 8 dashboard API tests
+- Added Pillow and python-multipart to requirements.txt
+- All 41 tests pass
+
+### Files Changed
+- `pipeline/image_gen.py` — Backend detection, IP-Adapter support, generation timing, exception handling fix
+- `dashboard/routes.py` — Import fix, new detect endpoint, enhanced upload validation
+- `dashboard/app.py` — Static mounts (from previous entry)
+- `dashboard/templates/index.html` — IP-Adapter UI, auto-detect button
+- `tests/test_image_generation.py` — 17 tests
+- `tests/test_image_generation_api.py` — 8 new tests
+- `requirements.txt` — Added Pillow and python-multipart
+- `README.md` — Detailed backend setup instructions
+
+### Tests Performed
+- `pytest tests/test_image_generation.py` — 17 passed
+- `pytest tests/test_image_generation_api.py` — 8 passed
+- `pytest tests/` — 41 passed, 5 warnings
+- Dashboard app load — PASS
+
+### Test Results
+- PASS: 41/41 total tests
+- PASS: Dashboard app loads successfully
+- BLOCKED: Real end-to-end generation (no backend installed on this machine)
+
+### Commit Hash
+*(pending)*
+
+### GitHub Push Status
+*(pending)*
+
+### Outstanding Issues
+1. ComfyUI/A1111 not installed locally — real end-to-end generation blocked
+2. IP-Adapter custom nodes not installed — IP-Adapter workflow untested with real backend
+3. Image preview requires running backend to generate actual images
+
+### Recommended Next Task
+Install ComfyUI or A1111 locally and run real end-to-end generation test.

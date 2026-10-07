@@ -44,6 +44,57 @@ def _a1111_base_url() -> str:
     return (settings.image_gen_base_url or "").strip().rstrip("/") or "http://127.0.0.1:7860"
 
 
+def detect_local_backends(timeout: float = 3.0) -> dict[str, Any]:
+    """Detect available local image generation backends on this machine."""
+    results: dict[str, Any] = {
+        "comfyui": {"detected": False, "url": _comfyui_base_url(), "error": ""},
+        "automatic1111": {"detected": False, "url": _a1111_base_url(), "error": ""},
+    }
+
+    for backend, url in [
+        ("comfyui", _comfyui_base_url()),
+        ("automatic1111", _a1111_base_url()),
+    ]:
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                if backend == "comfyui":
+                    response = client.get(f"{url}/object_info")
+                    if response.status_code == 200:
+                        data = response.json()
+                        models = []
+                        if "CheckpointLoaderSimple" in data:
+                            ckpt_info = data["CheckpointLoaderSimple"]
+                            if isinstance(ckpt_info, dict) and "input" in ckpt_info:
+                                ckpt_input = ckpt_info["input"]
+                                if isinstance(ckpt_input, dict) and "required" in ckpt_input:
+                                    ckpt_required = ckpt_input["required"]
+                                    if isinstance(ckpt_required, dict) and "ckpt_name" in ckpt_required:
+                                        models = [m[0] if isinstance(m, (list, tuple)) else str(m) for m in ckpt_required["ckpt_name"][0]]
+                        results[backend] = {
+                            "detected": True,
+                            "url": url,
+                            "models": models[:10],
+                            "nodes": len(data) if isinstance(data, dict) else 0,
+                        }
+                        continue
+                else:
+                    response = client.get(f"{url}/sdapi/v1/sd-models")
+                    if response.status_code == 200:
+                        data = response.json()
+                        models = [m.get("title") or m.get("model_name") for m in data] if isinstance(data, list) else []
+                        results[backend] = {
+                            "detected": True,
+                            "url": url,
+                            "models": models[:10],
+                        }
+                        continue
+                results[backend]["error"] = f"HTTP {response.status_code}"
+        except Exception as exc:
+            results[backend]["error"] = str(exc)[:200]
+
+    return results
+
+
 def _post_json(base_url: str, path: str, payload: dict, timeout: float = _DEFAULT_TIMEOUT) -> dict:
     url = f"{base_url}{path}"
     with httpx.Client(timeout=timeout) as client:
@@ -91,13 +142,22 @@ def _comfyui_workflow(
     scheduler: str = "normal",
     model: str = "",
     reference_image_path: str = "",
+    ip_adapter: bool = False,
+    ip_adapter_model: str = "ip-adapter-plus_sd15.bin",
 ) -> dict:
-    """Build a minimal ComfyUI API workflow for txt2img or img2img."""
+    """Build a minimal ComfyUI API workflow for txt2img or img2img.
+
+    If `reference_image_path` is provided, builds an img2img-style workflow.
+    If `ip_adapter=True`, includes optional IP-Adapter nodes (requires custom nodes).
+    Falls back to standard img2img when IP-Adapter nodes are unavailable.
+    """
     if seed == -1:
         seed = int(time.time() * 1000) % (2**32)
 
+    checkpoint = model or "v1-5-pruned-emaonly.safetensors"
+
     if reference_image_path:
-        return {
+        base = {
             "1": {
                 "class_type": "LoadImage",
                 "inputs": {"image": Path(reference_image_path).name},
@@ -123,7 +183,7 @@ def _comfyui_workflow(
             },
             "4": {
                 "class_type": "CheckpointLoaderSimple",
-                "inputs": {"ckpt_name": model or "v1-5-pruned-emaonly.safetensors"},
+                "inputs": {"ckpt_name": checkpoint},
             },
             "6": {
                 "class_type": "CLIPTextEncode",
@@ -143,7 +203,27 @@ def _comfyui_workflow(
             },
         }
 
-    return {
+        if ip_adapter:
+            base.update({
+                "10": {
+                    "class_type": "IPAdapterModelLoader",
+                    "inputs": {"ipadapter_file": ip_adapter_model},
+                },
+                "11": {
+                    "class_type": "IPAdapterApply",
+                    "inputs": {
+                        "ipadapter": ["10", 0],
+                        "clip_vision": ["4", 1],
+                        "image": ["1", 0],
+                        "model": ["4", 0],
+                    },
+                },
+            })
+            base["3"]["inputs"]["model"] = ["11", 0]
+
+        return base
+
+    base = {
         "3": {
             "class_type": "KSampler",
             "inputs": {
@@ -161,7 +241,7 @@ def _comfyui_workflow(
         },
         "4": {
             "class_type": "CheckpointLoaderSimple",
-            "inputs": {"ckpt_name": model or "v1-5-pruned-emaonly.safetensors"},
+            "inputs": {"ckpt_name": checkpoint},
         },
         "5": {
             "class_type": "EmptyLatentImage",
@@ -185,6 +265,26 @@ def _comfyui_workflow(
         },
     }
 
+    if ip_adapter:
+        base.update({
+            "10": {
+                "class_type": "IPAdapterModelLoader",
+                "inputs": {"ipadapter_file": ip_adapter_model},
+            },
+            "11": {
+                "class_type": "IPAdapterApply",
+                "inputs": {
+                    "ipadapter": ["10", 0],
+                    "clip_vision": ["4", 1],
+                    "image": ["5", 0],
+                    "model": ["4", 0],
+                },
+            },
+        })
+        base["3"]["inputs"]["model"] = ["11", 0]
+
+    return base
+
 
 def generate_image_comfyui(
     prompt: str,
@@ -197,6 +297,8 @@ def generate_image_comfyui(
     model: str = "",
     influencer_id: Optional[int] = None,
     reference_image_path: str = "",
+    ip_adapter: bool = False,
+    ip_adapter_model: str = "ip-adapter-plus_sd15.bin",
 ) -> str:
     """Generate an image using ComfyUI and return the local file path."""
     base_url = _comfyui_base_url()
@@ -215,6 +317,8 @@ def generate_image_comfyui(
         seed=seed,
         model=model,
         reference_image_path=reference_image_path,
+        ip_adapter=ip_adapter,
+        ip_adapter_model=ip_adapter_model,
     )
 
     logger.info("Submitting ComfyUI workflow to %s", base_url)
@@ -247,6 +351,8 @@ def generate_image_comfyui(
                     raise RuntimeError(f"ComfyUI generation failed: {status}")
         except httpx.HTTPStatusError:
             pass
+        except RuntimeError:
+            raise
         except Exception:
             pass
         time.sleep(2.0)
@@ -315,7 +421,10 @@ def generate_image_a1111(
         payload["init_images"] = [ref_path.read_bytes()]
 
     logger.info("Submitting A1111 txt2img to %s", base_url)
+    start = time.time()
     response = _post_json(base_url, "/sdapi/v1/txt2img", payload)
+    elapsed_ms = int((time.time() - start) * 1000)
+
     images = response.get("images", [])
     if not images:
         raise RuntimeError("A1111 returned no images")
@@ -323,12 +432,11 @@ def generate_image_a1111(
     output_dir = _ensure_output_dir()
     safe_name = f"a1111_{int(time.time()*1000)}.png"
     dest = output_dir / safe_name
-    dest.write_bytes(httpx.bytes(images[0]) if hasattr(httpx, "bytes") else images[0])
+    image_data = httpx.bytes(images[0]) if hasattr(httpx, "bytes") else images[0]
     if hasattr(images[0], "read"):
-        dest.write_bytes(images[0].read())
-    else:
-        dest.write_bytes(images[0])
-    logger.info("A1111 image saved: %s (%d bytes)", dest, len(images[0]))
+        image_data = images[0].read()
+    dest.write_bytes(image_data)
+    logger.info("A1111 image saved: %s (%d bytes, %dms)", dest, len(image_data), elapsed_ms)
     return str(dest)
 
 
@@ -344,6 +452,8 @@ def generate_image(
     model: str = "",
     influencer_id: Optional[int] = None,
     reference_image_path: str = "",
+    ip_adapter: bool = False,
+    ip_adapter_model: str = "ip-adapter-plus_sd15.bin",
 ) -> str:
     """Generate an image using the specified local backend.
 
@@ -363,6 +473,8 @@ def generate_image(
             model=model,
             influencer_id=influencer_id,
             reference_image_path=reference_image_path,
+            ip_adapter=ip_adapter,
+            ip_adapter_model=ip_adapter_model,
         )
     if backend in {"a1111", "automatic1111", "stable-diffusion-webui"}:
         return generate_image_a1111(

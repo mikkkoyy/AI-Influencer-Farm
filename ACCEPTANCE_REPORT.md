@@ -48,7 +48,7 @@
 | Professional dashboard | PASS | Dark theme, tabs, stats, tables, responsive |
 | Virtual influencer management | PASS | CRUD API, model, dashboard page |
 | Local AI via Ollama | PASS | Primary LLM, health check, model discovery |
-| Image generation backend | PARTIAL | Architecture ready, API tested, needs SD/ComfyUI installed |
+| Image generation backend | PARTIAL | Backend detection, reference images, IP-Adapter support, security validations implemented; needs SD/ComfyUI/A1111 installed for real end-to-end test |
 | Video generation pipeline | PARTIAL | FFmpeg ready, architecture present, needs end-to-end test |
 | Voice generation | PASS | Edge TTS integrated as local TTS |
 | Content calendar | PASS | Models, API, dashboard page |
@@ -89,4 +89,4 @@
 **PARTIAL:** 3 acceptance criteria partially met  
 **BLOCKED:** 1 acceptance criterion blocked by missing optional components
 
-The application is functional as a local AI influencer management system with working Ollama integration, influencer profiles, content calendar, content automation, publishing controls, prompt library, settings page, and dashboard. Optional components (image gen, video rendering, social publishing) are architecturally ready but require external software or credentials to test.
+The application is functional as a local AI influencer management system with working Ollama integration, influencer profiles, content calendar, content automation, publishing controls, prompt library, settings page, and dashboard. Image generation has backend detection, reference image upload, IP-Adapter support, and security validations implemented, but requires ComfyUI or A1111 to be installed for real end-to-end testing. Video rendering and social publishing require external components.

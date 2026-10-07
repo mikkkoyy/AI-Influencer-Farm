@@ -26,6 +26,7 @@ from config.settings import (
     ACCOUNTS,
     BASE_DIR,
 )
+import pipeline.image_gen
 
 router = APIRouter()
 
@@ -967,6 +968,12 @@ async def list_image_backends():
     return {"backends": results}
 
 
+@router.get("/image-generation/detect")
+async def detect_backends():
+    """Auto-detect available local image generation backends."""
+    return pipeline.image_gen.detect_local_backends()
+
+
 @router.post("/image-generation/generate")
 async def generate_image(payload: dict = Body(...)):
     """Generate an image using a local backend."""
@@ -981,11 +988,14 @@ async def generate_image(payload: dict = Body(...)):
     model = payload.get("model", "")
     influencer_id = payload.get("influencer_id")
     reference_image_path = payload.get("reference_image_path", "")
+    ip_adapter = bool(payload.get("ip_adapter", False))
+    ip_adapter_model = payload.get("ip_adapter_model", "ip-adapter-plus_sd15.bin")
 
     if not prompt:
         raise HTTPException(400, "Prompt is required")
 
     try:
+        start = time.time()
         path = pipeline.image_gen.generate_image(
             backend=backend,
             prompt=prompt,
@@ -998,7 +1008,10 @@ async def generate_image(payload: dict = Body(...)):
             model=model,
             influencer_id=influencer_id,
             reference_image_path=reference_image_path,
+            ip_adapter=ip_adapter,
+            ip_adapter_model=ip_adapter_model,
         )
+        elapsed_ms = int((time.time() - start) * 1000)
     except Exception as exc:
         audit.record("image_generation_failed", actor="dashboard", target=backend, details={"error": str(exc)[:200]})
         raise HTTPException(500, str(exc))
@@ -1015,36 +1028,57 @@ async def generate_image(payload: dict = Body(...)):
             steps=steps,
             cfg_scale=cfg_scale,
             seed=seed if seed != -1 else None,
+            generation_time_ms=elapsed_ms,
             is_reference=bool(reference_image_path),
             is_accepted=True,
         )
         session.add(record)
         session.flush()
-        audit.record("image_generated", actor="dashboard", target=str(record.id), details={"backend": backend, "path": path, "reference": bool(reference_image_path)})
+        audit.record("image_generated", actor="dashboard", target=str(record.id), details={"backend": backend, "path": path, "reference": bool(reference_image_path), "ip_adapter": ip_adapter, "elapsed_ms": elapsed_ms})
 
-    return {"path": path, "id": record.id}
+    return {"path": path, "id": record.id, "elapsed_ms": elapsed_ms}
 
 
 @router.post("/image-generation/reference-image")
 async def upload_reference_image(file: UploadFile = File(...), influencer_id: Optional[int] = Form(None)):
     """Upload a reference image for an influencer."""
-    allowed = {"image/png", "image/jpeg", "image/webp", "image/jpg"}
+    allowed = {"image/png", "image/jpeg", "image/webp"}
     if file.content_type not in allowed:
         raise HTTPException(400, f"Unsupported file type: {file.content_type}")
 
     ref_dir = Path(settings.db_path).parent / "reference-images"
     ref_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = f"ref_{int(time.time()*1000)}_{file.filename.replace('/', '_').replace('\\', '_')}"
+
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(400, "File too large. Max 10 MB.")
+
+    try:
+        from PIL import Image
+        import io
+        image = Image.open(io.BytesIO(content))
+        image.verify()
+        ext = image.format.lower() if image.format else "bin"
+        if ext not in {"png", "jpeg", "webp"}:
+            raise HTTPException(400, f"Unsupported image format: {ext}")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(400, "Uploaded file is not a valid image")
+
+    original_name = Path(file.filename or "reference").name
+    safe_stem = "".join(c if c.isalnum() or c in "-_ " else "_" for c in original_name)
+    safe_name = f"ref_{int(time.time()*1000)}_{safe_stem[:50]}.{ext}"
     dest = ref_dir / safe_name
     try:
-        dest.write_bytes(file.file.read())
+        dest.write_bytes(content)
     except Exception as exc:
         raise HTTPException(500, f"Failed to save reference image: {exc}")
 
     with get_session() as session:
         record = ImageGenerationHistory(
             influencer_id=influencer_id,
-            prompt=f"Reference image: {file.filename}",
+            prompt=f"Reference image: {original_name}",
             image_path=str(dest),
             backend="reference",
             is_reference=True,
@@ -1052,9 +1086,10 @@ async def upload_reference_image(file: UploadFile = File(...), influencer_id: Op
         )
         session.add(record)
         session.flush()
-        audit.record("reference_image_uploaded", actor="dashboard", target=str(record.id), details={"filename": file.filename, "influencer_id": influencer_id})
+        record_id = record.id
+        audit.record("reference_image_uploaded", actor="dashboard", target=str(record_id), details={"filename": original_name, "influencer_id": influencer_id, "size": len(content)})
 
-    return {"path": str(dest), "id": record.id, "url": f"/reference-images/{safe_name}"}
+    return {"path": str(dest), "id": record_id, "url": f"/reference-images/{safe_name}"}
 
 
 @router.get("/image-generation/history")

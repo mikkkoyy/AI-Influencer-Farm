@@ -203,14 +203,20 @@
                     <input id="img-cfg" type="number" value="7.0" step="0.1" placeholder="CFG" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
                     <input id="img-influencer" type="number" placeholder="Influencer ID" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
                     <input id="img-reference" type="file" accept="image/png,image/jpeg,image/webp" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                    <label style="display:flex;align-items:center;gap:6px;color:#aaa;font-size:12px">
+                        <input id="img-ipadapter" type="checkbox"> IP-Adapter (ComfyUI, optional)
+                    </label>
+                    <input id="img-ipadapter-model" placeholder="IP-Adapter model file" value="ip-adapter-plus_sd15.bin" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
                     <button id="img-generate" class="btn btn-primary">Generate</button>
                 </div>
                 <div id="img-status" style="margin-top:10px;color:#888;font-size:12px"></div>
             </div>
             <div class="card" style="margin-bottom:16px">
                 <h3 style="color:#00f2ea;margin-bottom:10px">Backend Status</h3>
-                <div id="img-backends"></div>
+                <div id="img-backends">Loading...</div>
                 <button id="img-refresh-backends" class="btn btn-success" style="margin-top:8px">Refresh</button>
+                <button id="img-detect-backends" class="btn btn-primary" style="margin-top:8px;margin-left:8px">Auto-Detect</button>
+                <div id="img-detected" style="margin-top:10px;color:#888;font-size:12px"></div>
             </div>
             <div class="card">
                 <h3 style="color:#00f2ea;margin-bottom:10px">Recent Images</h3>
@@ -909,8 +915,23 @@
                 <div style="padding:8px;background:#222;border-radius:6px;margin-bottom:6px">
                     <strong>${b.backend}</strong>: ${b.ok ? '<span style="color:#44ff44">ONLINE</span>' : '<span style="color:#ff4444">OFFLINE</span>'}
                     <div style="color:#888;font-size:12px">${b.url}${b.error ? ' — ' + b.error : ''}</div>
+                    ${b.models ? `<div style="color:#888;font-size:11px">Models: ${b.models.slice(0, 5).join(', ')}${b.models.length > 5 ? '...' : ''}</div>` : ''}
                 </div>
             `).join('');
+        }
+        async function detectBackends() {
+            const container = document.getElementById('img-detected');
+            if (container) container.textContent = 'Detecting...';
+            const res = await authFetch('/api/image-generation/detect');
+            const data = await res.json().catch(() => ({}));
+            const container2 = document.getElementById('img-detected');
+            if (!container2) return;
+            const lines = [];
+            for (const [name, info] of Object.entries(data)) {
+                const status = info.detected ? '<span style="color:#44ff44">FOUND</span>' : '<span style="color:#ff4444">not found</span>';
+                lines.push(`<div><strong>${name}</strong>: ${status} ${info.url}${info.error ? ' — ' + info.error : ''} ${info.models ? '| Models: ' + info.models.slice(0, 3).join(', ') : ''}</div>`);
+            }
+            container2.innerHTML = lines.join('') || '<span style="color:#888">No backends detected.</span>';
         }
         async function loadImageHistory() {
             const res = await authFetch('/api/image-generation/history');
@@ -918,12 +939,11 @@
             const container = document.getElementById('img-history');
             if (!container) return;
             container.innerHTML = items.map(img => {
-                const src = img.image_path.startsWith('http') ? img.image_path : img.image_path;
-                const displaySrc = img.is_reference ? src : (src.startsWith('/') ? src : `/generated-images/${Path.basename(src)}`);
+                const displaySrc = img.is_reference ? img.image_path : (img.image_path.startsWith('/') ? img.image_path : `/generated-images/${Path.basename(img.image_path)}`);
                 return `
                 <div style="background:#222;border-radius:6px;overflow:hidden">
                     <img src="${displaySrc}" style="width:100%;height:200px;object-fit:cover;background:#333" onerror="this.src='/static/placeholder.png'">
-                    <div style="padding:8px;font-size:12px;color:#aaa">${img.backend} · ${img.width}x${img.height} · ${img.is_reference ? 'REF' : 'GEN'} · ${img.created_at ? formatDate(img.created_at) : ''}</div>
+                    <div style="padding:8px;font-size:12px;color:#aaa">${img.backend} · ${img.width}x${img.height} · ${img.is_reference ? 'REF' : 'GEN'} · ${img.elapsed_ms ? img.elapsed_ms + 'ms' : ''} · ${img.created_at ? formatDate(img.created_at) : ''}</div>
                 </div>`;
             }).join('') || '<p style="color:#888">No images generated yet.</p>';
         }
@@ -951,6 +971,8 @@
                     steps: parseInt(document.getElementById('img-steps').value) || 30,
                     cfg_scale: parseFloat(document.getElementById('img-cfg').value) || 7.0,
                     influencer_id: parseInt(document.getElementById('img-influencer').value) || null,
+                    ip_adapter: document.getElementById('img-ipadapter').checked,
+                    ip_adapter_model: document.getElementById('img-ipadapter-model').value.trim(),
                 };
                 const refFile = document.getElementById('img-reference').files[0];
                 if (refFile) {
@@ -961,13 +983,14 @@
                 const r = await authFetch('/api/image-generation/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                 if (!r.ok) { const err = await r.json().catch(() => ({})); alert('Error: ' + (err.detail || JSON.stringify(err))); if (status) status.textContent = ''; return; }
                 const data = await r.json();
-                if (status) status.textContent = 'Saved: ' + data.path;
+                if (status) status.textContent = 'Saved: ' + data.path + (data.elapsed_ms ? ` (${data.elapsed_ms}ms)` : '');
                 document.getElementById('img-prompt').value = '';
                 document.getElementById('img-negative').value = '';
                 document.getElementById('img-reference').value = '';
                 loadImageHistory();
             });
             document.getElementById('img-refresh-backends')?.addEventListener('click', loadImageBackends);
+            document.getElementById('img-detect-backends')?.addEventListener('click', detectBackends);
         });
 
         // ----- Video Studio -----
