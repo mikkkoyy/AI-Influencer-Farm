@@ -324,6 +324,14 @@
     <div class="tab-pane" data-pane="platforms">
         <div class="section">
             <h2>Plataformas por Cuenta</h2>
+            <div class="card" style="margin-bottom:16px">
+                <h3 style="color:#00f2ea;margin-bottom:10px">Conexiones</h3>
+                <div id="platform-status" style="color:#888">Loading...</div>
+            </div>
+            <div class="card" style="margin-bottom:16px">
+                <h3 style="color:#00f2ea;margin-bottom:10px">Estado de Publicación</h3>
+                <div id="publish-status" style="color:#888">Loading...</div>
+            </div>
             <div class="grid" id="platform-grid"></div>
         </div>
     </div>
@@ -527,6 +535,15 @@
             }
             return links.join(' | ') || '-';
         }
+        function renderPlatformResultBadges(results) {
+            const badges = [];
+            for (const [platform, result] of Object.entries(results || {})) {
+                const label = platformShort(platform, {});
+                const ok = result && result.ok;
+                badges.push(`<span class="status-badge ${ok ? 'status-published' : 'status-failed'}">${label}: ${ok ? 'OK' : 'FAIL'}</span>`);
+            }
+            return badges.join(' ') || '-';
+        }
 
         // ----- Actions -----
         async function retryVideo(id) {
@@ -536,6 +553,26 @@
             alert(r.ok ? `Encolado para ${data.account}.` : `Error: ${JSON.stringify(data)}`);
             loadData();
         }
+        async function approveVideo(id) {
+            if (!confirm(`¿Aprobar el video ${id}?`)) return;
+            const r = await authFetch(`/api/videos/${id}/approve`, { method: 'POST' });
+            alert(r.ok ? 'Aprobado.' : 'Error al aprobar.');
+            loadData();
+        }
+        async function rejectVideo(id) {
+            if (!confirm(`¿Rechazar el video ${id}?`)) return;
+            const r = await authFetch(`/api/videos/${id}/reject`, { method: 'POST' });
+            alert(r.ok ? 'Rechazado.' : 'Error al rechazar.');
+            loadData();
+        }
+        async function retryPublish(id) {
+            if (!confirm(`¿Reintentar publicación del video ${id}?`)) return;
+            const r = await authFetch(`/api/publish/retry/${id}`, { method: 'POST' });
+            const data = await r.json().catch(() => ({}));
+            alert(r.ok ? `Reintentando publicación: ${data.id}` : `Error: ${JSON.stringify(data)}`);
+            loadData();
+        }
+        window.retryPublish = retryPublish;
         async function deleteVideo(id) {
             if (!confirm(`¿Eliminar el video ${id}? (no borra archivos)`)) return;
             const r = await authFetch(`/api/videos/${id}`, { method: 'DELETE' });
@@ -563,7 +600,7 @@
             try {
                 const [versionRes, healthRes, statsRes, videosRes, keysRes, emailsRes,
                        auditRes, providersRes, tsRes, platformRegistryRes, platformConfigRes,
-                       accountsRes, influencersRes] = await Promise.all([
+                       accountsRes, influencersRes, platformStatusRes, publishStatusRes] = await Promise.all([
                     authFetch('/version'),
                     authFetch('/health'),
                     authFetch('/api/stats'),
@@ -577,6 +614,8 @@
                     authFetch('/api/platforms'),
                     authFetch('/api/accounts'),
                     authFetch('/api/influencers'),
+                    authFetch('/api/platforms/status'),
+                    authFetch('/api/publish/status'),
                 ]);
 
                 if (statsRes.status === 401 || statsRes.status === 403) {
@@ -599,6 +638,8 @@
                 const platformConfig = await platformConfigRes.json().catch(() => ({}));
                 const accounts = await accountsRes.json().catch(() => ({}));
                 const influencers = await influencersRes.json().catch(() => []);
+                const platformStatus = await platformStatusRes.json().catch(() => ({}));
+                const publishStatus = await publishStatusRes.json().catch(() => ({ items: [] }));
 
                 document.getElementById('version-tag').textContent = ver.version ? `v${ver.version}` : '';
                 const pill = document.getElementById('health-pill');
@@ -627,19 +668,27 @@
                 // Platform controls
                 const platformHtml = Object.entries(accounts || {}).map(([acc, accountData]) => {
                     const toggles = platformConfig[acc] || {};
-                    const rows = Object.entries(platformRegistry || {}).map(([platform, meta]) => `
+                    const accStatus = platformStatus[acc] || {};
+                    const rows = Object.entries(platformRegistry || {}).map(([platform, meta]) => {
+                        const pStatus = accStatus[platform] || {};
+                        const isConnected = pStatus.connected;
+                        const reason = pStatus.reason || '';
+                        return `
                         <div class="platform-row">
                             <div>
                                 <div class="platform-name">${platformName(platform, platformRegistry)}</div>
                                 <div class="platform-meta">${meta.publisher || 'manual'}${meta.supports_direct_publish ? ' · directo' : ' · webhook/manual'}</div>
+                                <div style="font-size:11px;color:${isConnected ? '#44ff44' : '#ff4444'};margin-top:2px">
+                                    ${isConnected ? 'Conectado' : reason}
+                                </div>
                             </div>
                             <label class="toggle">
                                 <input type="checkbox" ${toggles[platform] ? 'checked' : ''}
                                        onchange="togglePlatform('${acc}', '${platform}', this.checked)">
                                 ${toggles[platform] ? 'ON' : 'OFF'}
                             </label>
-                        </div>
-                    `).join('');
+                        </div>`;
+                    }).join('');
                     return `<div class="card">
                         ${accountTag(acc)}
                         <div style="margin:8px 0 12px;color:#aaa">${accountData.display_name || acc}</div>
@@ -647,6 +696,41 @@
                     </div>`;
                 }).join('');
                 document.getElementById('platform-grid').innerHTML = platformHtml || '<p style="color:#888">Sin cuentas registradas.</p>';
+
+                // Platform connection status summary
+                const platformStatusContainer = document.getElementById('platform-status');
+                if (platformStatusContainer) {
+                    const summary = Object.entries(platformStatus || {}).map(([acc, platforms]) => {
+                        const connectedCount = Object.values(platforms).filter(p => p.connected).length;
+                        return `<div style="display:inline-block;margin:4px 8px 4px 0;padding:4px 10px;background:#222;border-radius:4px;font-size:12px">
+                            ${accountTag(acc)} <span style="color:${connectedCount > 0 ? '#44ff44' : '#ff4444'}">${connectedCount} conectados</span>
+                        </div>`;
+                    }).join('');
+                    platformStatusContainer.innerHTML = summary || '<span style="color:#888">Sin conexiones configuradas.</span>';
+                }
+
+                // Publishing status
+                const publishItems = publishStatus.items || [];
+                const failedPublishes = publishItems.filter(p => p.status === 'failed');
+                const publishStatusHtml = failedPublishes.length > 0
+                    ? `<div style="margin-bottom:8px;color:#ff4444">${failedPublishes.length} publicaciones fallidas</div>
+                       <table>
+                        <thead><tr><th>Cuenta</th><th>Estado</th><th>Publicado</th><th>Plataformas</th><th>Acción</th></tr></thead>
+                        <tbody>${failedPublishes.map(p => `
+                            <tr>
+                                <td>${accountTag(p.account)}</td>
+                                <td><span class="status-badge status-failed">${p.status}</span></td>
+                                <td>${p.published_at ? formatDate(p.published_at) : '-'}</td>
+                                <td>${renderPlatformResultBadges(p.platform_results)}</td>
+                                <td><button class="btn btn-primary" onclick="retryPublish(${p.id || ''})" ${!p.id ? 'disabled' : ''}>Reintentar</button></td>
+                            </tr>
+                        `).join('')}</tbody>
+                       </table>`
+                    : '<p style="color:#44ff44">Todas las publicaciones exitosas.</p>';
+                const pubContainer = document.getElementById('publish-status');
+                if (pubContainer) {
+                    pubContainer.innerHTML = publishStatusHtml;
+                }
 
                 // Videos table
                 document.getElementById('videos-table').innerHTML = videos.map(v => `
@@ -660,7 +744,8 @@
                         <td>${formatDate(v.created_at)}</td>
                         <td>
                             <button class="btn btn-primary" onclick="retryVideo(${v.id})">↻</button>
-                            <button class="btn btn-danger" onclick="deleteVideo(${v.id})">✕</button>
+                            <button class="btn btn-success" onclick="approveVideo(${v.id})">✓</button>
+                            <button class="btn btn-danger" onclick="rejectVideo(${v.id})">✕</button>
                         </td>
                     </tr>
                 `).join('');

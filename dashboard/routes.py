@@ -177,6 +177,32 @@ async def retry_video(video_id: int):
     return {"queued": True, "account": account}
 
 
+@router.post("/videos/{video_id}/approve")
+async def approve_video(video_id: int):
+    """Mark a video as approved for publishing."""
+    with get_session() as session:
+        v = session.query(Video).filter_by(id=video_id).first()
+        if not v:
+            raise HTTPException(404, "Video not found")
+        v.status = "approved"
+        session.flush()
+        audit.record("video_approved", actor="dashboard", target=str(video_id))
+        return {"approved": True, "id": video_id}
+
+
+@router.post("/videos/{video_id}/reject")
+async def reject_video(video_id: int):
+    """Mark a video as rejected."""
+    with get_session() as session:
+        v = session.query(Video).filter_by(id=video_id).first()
+        if not v:
+            raise HTTPException(404, "Video not found")
+        v.status = "rejected"
+        session.flush()
+        audit.record("video_rejected", actor="dashboard", target=str(video_id))
+        return {"rejected": True, "id": video_id}
+
+
 @router.post("/publish/{account}")
 async def manual_publish(account: str):
     """Force a manual production for an account."""
@@ -376,6 +402,85 @@ async def set_platform(account: str, platform: str, enabled: bool = Body(..., em
     audit.record("platform_toggle", actor="dashboard",
                  target=f"{account}:{platform}", details={"enabled": bool(enabled)})
     return cfg
+
+
+@router.get("/publish/status")
+async def publish_status():
+    """Return publishing status for all platforms."""
+    with get_session() as session:
+        rows = (
+            session.query(
+                Video.account,
+                Video.status,
+                Video.published_at,
+                Video.platform_results_json,
+                Video.tiktok_published,
+                Video.youtube_published,
+            )
+            .filter(Video.status.in_(["published", "publishing", "failed"]))
+            .order_by(Video.created_at.desc())
+            .limit(50)
+            .all()
+        )
+        results = []
+        for account, status, published_at, raw_results, tiktok, youtube in rows:
+            results.append({
+                "account": account,
+                "status": status,
+                "published_at": published_at.isoformat() if published_at else None,
+                "tiktok_published": bool(tiktok),
+                "youtube_published": bool(youtube),
+                "platform_results": _json_map(raw_results),
+            })
+        return {"items": results}
+
+
+@router.get("/platforms/status")
+async def platform_connection_status():
+    """Return platform connection status (credential availability, etc.)."""
+    status = {}
+    for account in list_account_ids():
+        platforms = {}
+        for platform in list_platform_ids():
+            info = get_platform_info(platform)
+            publisher = str(info.get("publisher") or "").lower() if info else ""
+            connected = False
+            reason = "not_configured"
+            if platform == "tiktok":
+                token_path = settings.base_dir / "config" / f"tiktok_{account}_token.json"
+                connected = token_path.exists()
+                reason = "ok" if connected else "missing_token"
+            elif platform == "youtube":
+                token_path = settings.base_dir / "config" / f"youtube_{account}_token.json"
+                connected = token_path.exists()
+                reason = "ok" if connected else "missing_token"
+            elif publisher == "webhook":
+                webhook = platform_webhook_url(platform)
+                connected = bool(webhook)
+                reason = "ok" if connected else "missing_webhook"
+            platforms[platform] = {
+                "connected": connected,
+                "reason": reason,
+                "publisher": publisher,
+            }
+        status[account] = platforms
+    return status
+
+
+@router.post("/publish/retry/{video_id}")
+async def retry_publish(video_id: int):
+    """Retry publishing for a failed video."""
+    with get_session() as session:
+        v = session.query(Video).filter_by(id=video_id).first()
+        if not v:
+            raise HTTPException(404, "Video not found")
+        v.status = "approved"
+        session.flush()
+        audit.record("publish_retry", actor="dashboard", target=str(video_id))
+    import asyncio
+    from pipeline.orchestrator import _publish_video_to_platforms
+    asyncio.create_task(_publish_video_to_platforms(video_id))
+    return {"retried": True, "id": video_id}
 
 
 @router.get("/calendar")
@@ -942,6 +1047,45 @@ async def get_image_history(influencer_id: Optional[int] = Query(None)):
             }
             for r in query.all()
         ]
+
+
+@router.post("/content-calendar/entries")
+async def create_calendar_entry(entry: dict = Body(...)):
+    """Create a content calendar entry from a generated content plan."""
+    influencer_id = entry.get("influencer_id")
+    scheduled_at = entry.get("scheduled_at")
+    title = entry.get("title", "Untitled")
+    topic = entry.get("topic", "")
+    status = entry.get("status", "draft")
+    if not scheduled_at:
+        raise HTTPException(400, "scheduled_at is required")
+    try:
+        scheduled_dt = datetime.fromisoformat(scheduled_at)
+    except ValueError:
+        raise HTTPException(400, "Invalid scheduled_at format. Use ISO 8601.")
+    with get_session() as session:
+        calendar_entry = ContentCalendarEntry(
+            influencer_id=influencer_id,
+            title=title,
+            topic=topic,
+            scheduled_at=scheduled_dt,
+            status=status,
+        )
+        session.add(calendar_entry)
+        session.flush()
+        return {"id": calendar_entry.id, "status": calendar_entry.status, "scheduled_at": scheduled_dt.isoformat()}
+
+
+@router.post("/content-calendar/entries/{entry_id}/publish")
+async def publish_calendar_entry(entry_id: int):
+    """Mark a calendar entry as ready to publish and trigger production."""
+    with get_session() as session:
+        entry = session.query(ContentCalendarEntry).filter_by(id=entry_id).first()
+        if not entry:
+            raise HTTPException(404, "Calendar entry not found")
+        entry.status = "ready"
+        session.flush()
+        return {"id": entry.id, "status": entry.status}
 
 
 @router.get("/content-drafts")
