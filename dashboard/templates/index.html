@@ -130,6 +130,7 @@
         <button class="tab-btn active" data-tab="overview">Overview</button>
         <button class="tab-btn" data-tab="influencers">Influencers</button>
         <button class="tab-btn" data-tab="image-studio">Image Studio</button>
+        <button class="tab-btn" data-tab="video-studio">Video Studio</button>
         <button class="tab-btn" data-tab="calendar">Calendar</button>
         <button class="tab-btn" data-tab="platforms">Platforms</button>
         <button class="tab-btn" data-tab="videos">Videos</button>
@@ -209,6 +210,35 @@
             <div class="card">
                 <h3 style="color:#00f2ea;margin-bottom:10px">Recent Images</h3>
                 <div id="img-history" style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Video Studio tab -->
+    <div class="tab-pane" data-pane="video-studio">
+        <div class="section">
+            <h2>Video Studio</h2>
+            <div class="card" style="margin-bottom:16px">
+                <h3 style="color:#00f2ea;margin-bottom:10px">Produce Video</h3>
+                <div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
+                    <select id="vid-account" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                        <option value="terror">Terror</option>
+                        <option value="historias">Historias</option>
+                        <option value="dinero">Dinero</option>
+                    </select>
+                    <input id="vid-title" placeholder="Title (optional)" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                    <button id="vid-produce" class="btn btn-primary">Produce Video</button>
+                </div>
+                <div id="vid-status" style="margin-top:10px;color:#888;font-size:12px"></div>
+            </div>
+            <div class="card">
+                <h3 style="color:#00f2ea;margin-bottom:10px">Recent Videos</h3>
+                <table>
+                    <thead>
+                        <tr><th>ID</th><th>Account</th><th>Title</th><th>Status</th><th>Score</th><th>Created</th></tr>
+                    </thead>
+                    <tbody id="video-studio-table"></tbody>
+                </table>
             </div>
         </div>
     </div>
@@ -765,11 +795,38 @@
             document.getElementById('img-refresh-backends')?.addEventListener('click', loadImageBackends);
         });
 
+        // ----- Video Studio -----
+        async function loadVideoStudio() {
+            const res = await authFetch('/api/videos?limit=10');
+            const data = await res.json().catch(() => ({ items: [] }));
+            const videos = data.items || [];
+            const tbody = document.getElementById('video-studio-table');
+            if (!tbody) return;
+            tbody.innerHTML = videos.map(v => `<tr>
+                <td>${v.id}</td><td>${v.account}</td><td>${(v.title || '-').substring(0, 40)}</td><td>${v.status}</td><td>${v.quality_score ? v.quality_score.toFixed(1) : '-'}</td><td>${formatDate(v.created_at)}</td>
+            </tr>`).join('') || '<tr><td colspan="6" style="color:#888">No videos yet.</td></tr>';
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('vid-produce')?.addEventListener('click', async () => {
+                const status = document.getElementById('vid-status');
+                if (status) status.textContent = 'Starting production...';
+                const account = document.getElementById('vid-account').value;
+                const title = document.getElementById('vid-title').value.trim();
+                const r = await authFetch('/api/publish/' + encodeURIComponent(account), { method: 'POST' });
+                if (!r.ok) { const err = await r.json().catch(() => ({})); alert('Error: ' + (err.detail || JSON.stringify(err))); if (status) status.textContent = ''; return; }
+                const data = await r.json();
+                if (status) status.textContent = 'Queued for account: ' + data.account;
+                document.getElementById('vid-title').value = '';
+                loadVideoStudio();
+            });
+        });
+
         loadData();
         loadInfluencers();
         loadCalendar();
         loadImageBackends();
         loadImageHistory();
+        loadVideoStudio();
         setInterval(loadData, 60000);
     </script>
 </body>
