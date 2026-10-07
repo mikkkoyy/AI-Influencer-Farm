@@ -198,6 +198,13 @@ class Settings(BaseSettings):
     video_width: int = 1080
     video_height: int = 1920
 
+    # Image generation (local backends)
+    image_gen_base_url: str = ""
+    image_gen_default_steps: int = 30
+    image_gen_default_cfg: float = 7.0
+    image_gen_default_width: int = 512
+    image_gen_default_height: int = 768
+
     # Dashboard
     dashboard_host: str = "0.0.0.0"
     dashboard_port: int = 8000

@@ -849,3 +849,96 @@ async def safe_settings():
         "publish_inter_platform_delay",
     }
     return {k: getattr(settings, k) for k in keep if hasattr(settings, k)}
+
+
+@router.get("/image-generation/backends")
+async def list_image_backends():
+    """Check health of configured local image generation backends."""
+    backends = ["comfyui", "automatic1111"]
+    results = []
+    for backend in backends:
+        results.append(pipeline.image_gen.check_backend_health(backend))
+    return {"backends": results}
+
+
+@router.post("/image-generation/generate")
+async def generate_image(payload: dict = Body(...)):
+    """Generate an image using a local backend."""
+    backend = payload.get("backend", "comfyui")
+    prompt = payload.get("prompt", "")
+    negative_prompt = payload.get("negative_prompt", "")
+    width = int(payload.get("width", 512))
+    height = int(payload.get("height", 768))
+    steps = int(payload.get("steps", 30))
+    cfg_scale = float(payload.get("cfg_scale", 7.0))
+    seed = int(payload.get("seed", -1))
+    model = payload.get("model", "")
+    influencer_id = payload.get("influencer_id")
+
+    if not prompt:
+        raise HTTPException(400, "Prompt is required")
+
+    try:
+        path = pipeline.image_gen.generate_image(
+            backend=backend,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            width=width,
+            height=height,
+            steps=steps,
+            cfg_scale=cfg_scale,
+            seed=seed,
+            model=model,
+            influencer_id=influencer_id,
+        )
+    except Exception as exc:
+        audit.record("image_generation_failed", actor="dashboard", target=backend, details={"error": str(exc)[:200]})
+        raise HTTPException(500, str(exc))
+
+    with get_session() as session:
+        record = ImageGenerationHistory(
+            influencer_id=influencer_id,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            image_path=path,
+            backend=backend,
+            width=width,
+            height=height,
+            steps=steps,
+            cfg_scale=cfg_scale,
+            seed=seed if seed != -1 else None,
+            is_accepted=True,
+        )
+        session.add(record)
+        session.flush()
+        audit.record("image_generated", actor="dashboard", target=str(record.id), details={"backend": backend, "path": path})
+
+    return {"path": path, "id": record.id}
+
+
+@router.get("/image-generation/history")
+async def get_image_history(influencer_id: Optional[int] = Query(None)):
+    """Return recent image generation history."""
+    with get_session() as session:
+        query = session.query(ImageGenerationHistory).order_by(ImageGenerationHistory.created_at.desc()).limit(50)
+        if influencer_id is not None:
+            query = query.filter(ImageGenerationHistory.influencer_id == influencer_id)
+        return [
+            {
+                "id": r.id,
+                "influencer_id": r.influencer_id,
+                "prompt": r.prompt,
+                "negative_prompt": r.negative_prompt,
+                "image_path": r.image_path,
+                "backend": r.backend,
+                "width": r.width,
+                "height": r.height,
+                "steps": r.steps,
+                "cfg_scale": r.cfg_scale,
+                "seed": r.seed,
+                "is_reference": r.is_reference,
+                "is_accepted": r.is_accepted,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in query.all()
+        ]
