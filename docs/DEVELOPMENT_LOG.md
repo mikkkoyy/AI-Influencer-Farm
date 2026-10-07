@@ -320,10 +320,10 @@ Add integration test for real backend detection and verify end-to-end with actua
 - BLOCKED: Real end-to-end generation (no backend installed on this machine)
 
 ### Commit Hash
-*(pending)*
+89363d5
 
 ### GitHub Push Status
-*(pending)*
+**PUSHED** — Commit 89363d5 successfully pushed to `origin/main` on 2026-10-07.
 
 ### Outstanding Issues
 1. ComfyUI/A1111 not installed locally — real end-to-end generation blocked
