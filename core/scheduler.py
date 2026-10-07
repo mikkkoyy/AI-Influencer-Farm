@@ -187,5 +187,59 @@ def setup_scheduler(bot=None) -> AsyncIOScheduler:
 
     register_daily_stats_job(scheduler, bot=bot)
     register_backup_job(scheduler)
+    register_publishing_queue_job(scheduler)
+    register_calendar_automation_job(scheduler)
 
     return scheduler
+
+
+def register_publishing_queue_job(scheduler: AsyncIOScheduler):
+    """Register periodic publishing queue processor."""
+    try:
+        from pipeline.publishing_queue import process_due_jobs
+
+        scheduler.add_job(
+            process_due_jobs,
+            trigger=IntervalTrigger(minutes=5, jitter=60, timezone=settings.timezone),
+            id="publishing_queue",
+            name="Publishing Queue Processor",
+            replace_existing=True,
+        )
+        logger.info("Scheduled publishing queue processor every 5 minutes")
+    except Exception as e:
+        logger.warning("Publishing queue not configured: %s", e)
+
+
+def register_calendar_automation_job(scheduler: AsyncIOScheduler):
+    """Register periodic calendar automation checker."""
+    if not settings.automation_enabled:
+        logger.info("Automation disabled in settings")
+        return
+    try:
+        from pipeline.orchestrator import produce_video
+
+        async def _check_calendar():
+            from core.db import get_session
+            from core.models import ContentCalendarEntry
+            now = datetime.utcnow()
+            with get_session() as session:
+                entries = session.query(ContentCalendarEntry).filter(
+                    ContentCalendarEntry.status == "scheduled",
+                    ContentCalendarEntry.scheduled_at <= now,
+                ).limit(10).all()
+                for entry in entries:
+                    logger.info("Auto-triggering production for calendar entry %d", entry.id)
+                    entry.status = "publishing"
+                    session.flush()
+                    asyncio.create_task(produce_video(entry.account))
+
+        scheduler.add_job(
+            _check_calendar,
+            trigger=IntervalTrigger(minutes=10, jitter=120, timezone=settings.timezone),
+            id="calendar_automation",
+            name="Calendar Automation Checker",
+            replace_existing=True,
+        )
+        logger.info("Scheduled calendar automation checker every 10 minutes")
+    except Exception as e:
+        logger.warning("Calendar automation not configured: %s", e)

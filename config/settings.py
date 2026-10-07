@@ -230,6 +230,24 @@ class Settings(BaseSettings):
     morning_stats_hour: int = 8
     morning_stats_minute: int = 0
 
+    # === AUTOMATION (NEW in v1.5) ===
+    automation_enabled: bool = False
+    automation_require_approval: bool = True
+    automation_auto_generate_content: bool = False
+    automation_auto_create_video: bool = False
+    automation_auto_schedule: bool = False
+    automation_max_daily_posts: int = 5
+    automation_min_delay_seconds: int = 3600
+    automation_retry_backoff_base: int = 60
+    automation_retry_backoff_max: int = 600
+
+    # === RATE LIMITS (NEW in v1.5) ===
+    max_posts_per_day_tiktok: int = 5
+    max_posts_per_day_youtube: int = 5
+    max_posts_per_day_instagram: int = 3
+    max_posts_per_day_facebook: int = 3
+    max_posts_per_day: int = 10
+
     # === ROTATION & RESILIENCE (NEW in v1.1) ===
     key_cooldown_seconds: int = 300
     key_max_failures_before_cooldown: int = 3

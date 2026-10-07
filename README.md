@@ -12,6 +12,10 @@ A local AI-powered content business management system for creating, organizing, 
 - **Virtual Influencer Management** — Create and manage multiple AI influencer identities with profiles, bios, personalities, and visual descriptions
 - **Local AI via Ollama** — Primary LLM provider with model discovery and health checks
 - **Content Calendar** — Plan, schedule, and track content with draft/approved/scheduled/published states
+- **Content Templates** — Reusable templates for TikTok, YouTube, Instagram, Facebook with platform-specific durations, caption formats, and hashtag strategies
+- **Publishing Queue** — Persistent, restart-safe queue for platform dispatch with retry, cancel, rate limiting, and manual export fallback
+- **Automation Controls** — Enable/disable automation, require approval, auto-generate content, auto-create videos, auto-schedule, max daily posts, min delay
+- **Approval Workflow** — Draft → pending review → approved → scheduled → publishing → published (with reject/cancel support)
 - **Video Pipeline** — End-to-end video production with script generation, TTS narration, image sequences, subtitles, and FFmpeg compositing
 - **Multi-Platform Publishing** — TikTok, YouTube Shorts, and Instagram Reels support
 - **Analytics Dashboard** — Track performance metrics and engagement

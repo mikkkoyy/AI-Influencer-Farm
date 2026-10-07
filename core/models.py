@@ -347,3 +347,70 @@ class AnalyticsSnapshot(Base):
     def __repr__(self):
         return f"<AnalyticsSnapshot {self.id} [{self.influencer_id}:{self.platform}] {self.date}>"
 
+
+class ContentTemplate(Base):
+    """Reusable content templates for automated generation."""
+    __tablename__ = "content_templates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(200), nullable=False)
+    description = Column(Text)
+    platform = Column(String(30), nullable=False)   # tiktok, youtube, instagram, facebook
+    content_type = Column(String(50), default="video")  # video, image, carousel, story
+    content_style = Column(String(100))             # educational, promotional, story, product
+    recommended_duration = Column(Integer)          # seconds
+    caption_format = Column(Text)                   # template string with {title}, {hashtags}, etc.
+    hashtag_strategy = Column(Text)                 # JSON array or template
+    cta_text = Column(Text)
+    required_media = Column(String(200))            # image, video, both
+    niche = Column(String(50))                      # optional filter
+    language = Column(String(10), default="en")
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<ContentTemplate {self.id} [{self.platform}] {self.name}>"
+
+
+class PublishingQueue(Base):
+    """Persistent publishing queue for platform dispatch."""
+    __tablename__ = "publishing_queue"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    video_id = Column(Integer, nullable=False, index=True)
+    influencer_id = Column(Integer, nullable=True, index=True)
+    account = Column(String(50), nullable=False, index=True)
+    platform = Column(String(30), nullable=False, index=True)
+    status = Column(String(30), nullable=False, default="queued", index=True)
+    # Status: queued, processing, published, failed, cancelled
+
+    title = Column(String(500))
+    description = Column(Text)
+    caption = Column(Text)
+    hashtags = Column(Text)              # JSON array
+    thumbnail_path = Column(String(500))
+    video_path = Column(String(500))
+    export_path = Column(String(500))    # zip/package path for manual export
+
+    scheduled_at = Column(DateTime, index=True)
+    published_at = Column(DateTime)
+    retry_count = Column(Integer, default=0)
+    max_retries = Column(Integer, default=3)
+
+    platform_response = Column(Text)     # JSON: platform-specific response
+    error_message = Column(Text)
+    idempotency_key = Column(String(200), unique=True, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_pubqueue_platform_status", "platform", "status"),
+        Index("idx_pubqueue_scheduled", "scheduled_at"),
+        Index("idx_pubqueue_account_platform", "account", "platform"),
+    )
+
+    def __repr__(self):
+        return f"<PublishingQueue {self.id} [{self.account}:{self.platform}] {self.status}>"
+

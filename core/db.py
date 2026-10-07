@@ -41,6 +41,7 @@ def init_db():
     _ensure_v12_schema()
     _ensure_v13_schema()
     _ensure_v14_schema()
+    _ensure_v15_schema()
     logger.info("Database initialized at %s", settings.db_path)
 
 
@@ -86,6 +87,11 @@ def _ensure_v14_schema() -> None:
             if column not in existing:
                 logger.info("Adding missing videos.%s column", column)
                 connection.execute(text(f"ALTER TABLE videos ADD COLUMN {column} {column_type}"))
+
+
+def _ensure_v15_schema() -> None:
+    """v1.5: content_templates and publishing_queue tables are created by Base.metadata.create_all."""
+    pass
 
 
 @contextmanager

@@ -424,3 +424,93 @@ feat(video-pipeline): add video assembler, MP4 validation, Video Studio API, and
 
 ### Recommended Next Task
 Verify real end-to-end video generation with available images and push to GitHub.
+
+---
+
+## Entry 7 — Automated Content Pipeline and Publishing Queue
+
+**Date:** 2026-10-07  
+**Task:** Build automated content pipeline and publishing queue  
+**Branch:** main  
+**Commit:** *(pending)*
+
+### Implementation Summary
+- Added `core/models.py` new models:
+  - `ContentTemplate` — Reusable content templates for TikTok, YouTube, Instagram, Facebook
+  - `PublishingQueue` — Persistent publishing queue with idempotency keys, retry, cancel, manual export
+- Added database migration `_ensure_v15_schema()` in `core/db.py`
+- Created `pipeline/content_templates.py`:
+  - Built-in templates for short-form platforms
+  - Template CRUD operations
+  - Platform/content-style/niche filtering
+- Created `pipeline/publishing_queue.py`:
+  - Persistent publishing queue with status tracking (queued/processing/published/failed/cancelled)
+  - Idempotency keys to prevent duplicate publishing
+  - Safe retries with configurable max retries
+  - Manual export fallback when platform credentials are unavailable
+  - Rate limiting per platform/day
+  - ZIP export package with manifest.json
+- Updated `core/scheduler.py`:
+  - Added `register_publishing_queue_job()` — periodic processing of due queue jobs
+  - Added `register_calendar_automation_job()` — auto-trigger video production from scheduled calendar entries
+- Updated `dashboard/routes.py`:
+  - Content templates API: list, get, create, update, delete
+  - Publishing queue API: list, get, enqueue, retry, cancel, process, export, process-due
+  - Content pipeline API: list, approve, reject
+  - Automation settings API: get/update settings, rate limits
+  - Analytics summary API
+- Enhanced `dashboard/templates/index.html`:
+  - Publishing Queue tab with platform/status filters, refresh, process-due, retry/cancel/export actions
+  - Content Pipeline tab with influencer/status filters, approve/reject actions
+  - Automation tab with enable/disable, approval requirement, auto-generate/auto-create/auto-schedule toggles, max daily posts, min delay, rate limits display
+- Updated `config/settings.py`:
+  - Added automation settings (enabled, require_approval, auto_generate_content, auto_create_video, auto_schedule, max_daily_posts, min_delay_seconds, retry_backoff)
+  - Added rate limits per platform (tiktok, youtube, instagram, facebook, total)
+- Added comprehensive tests in `tests/test_content_pipeline.py`:
+  - 37 tests covering templates, publishing queue, API endpoints, automation settings, analytics, content pipeline approval/rejection, and filters
+- All 106 tests pass
+
+### Files Changed
+- `core/models.py` — Added ContentTemplate, PublishingQueue models
+- `core/db.py` — Added v1.5 schema migration
+- `pipeline/content_templates.py` — New file (template system)
+- `pipeline/publishing_queue.py` — New file (publishing queue with manual export)
+- `core/scheduler.py` — Added publishing queue and calendar automation jobs
+- `config/settings.py` — Added automation and rate limit settings
+- `dashboard/routes.py` — Added content templates, publishing queue, automation, and analytics API endpoints
+- `dashboard/templates/index.html` — Enhanced UI with publishing queue, content pipeline, and automation tabs
+- `tests/test_content_pipeline.py` — New file (37 tests)
+- `docs/DEVELOPMENT_LOG.md` — This entry
+
+### Tests Performed
+- `pytest tests/` — 106 passed, 197 warnings in ~5 minutes
+- Publishing queue API — PASS (create, list, get, retry, cancel, process, export)
+- Content templates CRUD — PASS
+- Automation settings — PASS
+- Rate limiting — PASS
+- Analytics summary — PASS
+- Approval/rejection workflow — PASS
+
+### Test Results
+- PASS: 106/106 total tests
+- PASS: All new content pipeline and publishing queue tests
+- PASS: All existing tests continue passing
+
+### Commit Hash
+*(pending)*
+
+### Commit Message
+feat(content-pipeline): add content templates, publishing queue, automation controls, and scheduler integration
+
+### GitHub Push Status
+*(pending)*
+
+### Outstanding Issues
+1. ComfyUI/A1111 not installed locally — image generation still requires remote backends
+2. Real platform credentials not configured — publishing tested with manual export fallback
+3. Real TTS not tested end-to-end in automated tests
+4. Whisper model not downloaded — deterministic captions used as fallback
+5. Large test suite takes ~5 minutes to run
+
+### Recommended Next Task
+Configure platform credentials and run full end-to-end publishing test.

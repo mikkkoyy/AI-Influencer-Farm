@@ -311,13 +311,96 @@
     <div class="tab-pane" data-pane="publishing-queue">
         <div class="section">
             <h2>Publishing Queue</h2>
-            <div class="card">
+            <div class="card" style="margin-bottom:16px">
+                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+                    <select id="pq-platform" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                        <option value="">All Platforms</option>
+                        <option value="tiktok">TikTok</option>
+                        <option value="youtube">YouTube</option>
+                        <option value="instagram">Instagram</option>
+                        <option value="facebook">Facebook</option>
+                    </select>
+                    <select id="pq-status" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                        <option value="">All Statuses</option>
+                        <option value="queued">Queued</option>
+                        <option value="processing">Processing</option>
+                        <option value="published">Published</option>
+                        <option value="failed">Failed</option>
+                        <option value="cancelled">Cancelled</option>
+                    </select>
+                    <button id="pq-refresh" class="btn btn-success">Refresh</button>
+                    <button id="pq-process-due" class="btn btn-primary">Process Due Jobs</button>
+                </div>
                 <table>
                     <thead>
-                        <tr><th>ID</th><th>Account</th><th>Title</th><th>Status</th><th>Platforms</th><th>Published</th></tr>
+                        <tr><th>ID</th><th>Video</th><th>Account</th><th>Platform</th><th>Status</th><th>Scheduled</th><th>Retries</th><th>Error</th><th>Actions</th></tr>
                     </thead>
                     <tbody id="pub-queue-table"></tbody>
                 </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Content Pipeline tab -->
+    <div class="tab-pane" data-pane="content-pipeline">
+        <div class="section">
+            <h2>Content Pipeline</h2>
+            <div class="card" style="margin-bottom:16px">
+                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+                    <select id="cp-influencer" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px"><option value="">All Influencers</option></select>
+                    <select id="cp-status" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                        <option value="">All Statuses</option>
+                        <option value="scripting">Scripting</option>
+                        <option value="generating_video">Generating Video</option>
+                        <option value="reviewing">Review</option>
+                        <option value="approved">Approved</option>
+                        <option value="publishing">Publishing</option>
+                        <option value="published">Published</option>
+                        <option value="failed">Failed</option>
+                    </select>
+                    <button id="cp-refresh" class="btn btn-success">Refresh</button>
+                </div>
+                <table>
+                    <thead>
+                        <tr><th>ID</th><th>Account</th><th>Title</th><th>Status</th><th>Progress</th><th>Error</th><th>Actions</th></tr>
+                    </thead>
+                    <tbody id="content-pipeline-table"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Automation tab -->
+    <div class="tab-pane" data-pane="automation">
+        <div class="section">
+            <h2>Automation Controls</h2>
+            <div class="card" style="margin-bottom:16px">
+                <h3 style="color:#00f2ea;margin-bottom:10px">Settings</h3>
+                <div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">
+                    <label style="display:flex;align-items:center;gap:6px;color:#aaa;font-size:12px">
+                        <input id="auto-enabled" type="checkbox"> Enable Automation
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;color:#aaa;font-size:12px">
+                        <input id="auto-approval" type="checkbox" checked> Require Approval
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;color:#aaa;font-size:12px">
+                        <input id="auto-generate" type="checkbox"> Auto-generate Content
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;color:#aaa;font-size:12px">
+                        <input id="auto-video" type="checkbox"> Auto-create Videos
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;color:#aaa;font-size:12px">
+                        <input id="auto-schedule" type="checkbox"> Auto-schedule
+                    </label>
+                    <input id="auto-max-posts" type="number" placeholder="Max daily posts" value="5" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                    <input id="auto-min-delay" type="number" placeholder="Min delay (seconds)" value="3600" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                    <button id="auto-save" class="btn btn-primary">Save Automation Settings</button>
+                </div>
+                <div id="auto-status" style="margin-top:10px;color:#888;font-size:12px"></div>
+            </div>
+            <div class="card">
+                <h3 style="color:#00f2ea;margin-bottom:10px">Rate Limits</h3>
+                <div id="rate-limits" style="color:#888">Loading...</div>
             </div>
         </div>
     </div>
@@ -1128,6 +1211,13 @@
             document.getElementById('vs-create')?.addEventListener('click', createVideoStudioJob);
         });
 
+        document.addEventListener('DOMContentLoaded', () => {
+            const cpSel = document.getElementById('cp-influencer');
+            if (cpSel) {
+                cpSel.innerHTML = '<option value="">All Influencers</option>' + allInfluencers.map(i => `<option value="${i.id}">${i.display_name || i.name}</option>`).join('');
+            }
+        });
+
         // ----- Content Studio -----
         async function loadContentDrafts() {
             const res = await authFetch('/api/content-drafts');
@@ -1159,24 +1249,109 @@
 
         // ----- Publishing Queue -----
         async function loadPublishingQueue() {
-            const res = await authFetch('/api/videos?limit=50&status=publishing');
-            const data = await res.json().catch(() => ({ items: [] }));
-            const videos = data.items || [];
+            const platform = document.getElementById('pq-platform')?.value || '';
+            const status = document.getElementById('pq-status')?.value || '';
+            const res = await authFetch('/api/publishing-queue?platform=' + encodeURIComponent(platform) + '&status=' + encodeURIComponent(status) + '&limit=100');
+            const data = await res.json().catch(() => []);
             const tbody = document.getElementById('pub-queue-table');
             if (!tbody) return;
-            tbody.innerHTML = videos.map(v => {
-                const platforms = [];
-                if (v.tiktok_published) platforms.push('TT');
-                if (v.youtube_published) platforms.push('YT');
-                const results = v.platform_results || {};
-                for (const [platform, result] of Object.entries(results)) {
-                    if (result && result.url) platforms.push(platform.slice(0, 2).toUpperCase());
-                }
-                return `<tr>
-                    <td>${v.id}</td><td>${v.account}</td><td>${(v.title || '-').substring(0, 40)}</td><td>${v.status}</td><td>${platforms.join(', ') || '-'}</td><td>${v.published_at ? formatDate(v.published_at) : '-'}</td>
-                </tr>`;
-            }).join('') || '<tr><td colspan="6" style="color:#888">No publishing queue items.</td></tr>';
+            tbody.innerHTML = data.map(j => `<tr>
+                <td>${j.id}</td><td>${j.video_id}</td><td>${j.account}</td><td>${j.platform}</td><td><span class="status-badge ${statusClass(j.status)}">${j.status}</span></td><td>${j.scheduled_at ? formatDate(j.scheduled_at) : '-'}</td><td>${j.retry_count}/${j.max_retries}</td><td style="color:#ff4444;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${j.error_message || '-'}</td>
+                <td>
+                    ${j.status === 'failed' ? `<button class="btn btn-primary" onclick="retryPublishingJob(${j.id})">Retry</button>` : ''}
+                    ${j.status === 'queued' || j.status === 'processing' ? `<button class="btn btn-danger" onclick="cancelPublishingJob(${j.id})">Cancel</button>` : ''}
+                    ${j.export_path ? `<a href="/api/publishing-queue/export/${j.id}" class="btn btn-success">Export</a>` : ''}
+                </td>
+            </tr>`).join('') || '<tr><td colspan="9" style="color:#888">No publishing queue items.</td></tr>';
         }
+        async function retryPublishingJob(id) {
+            const r = await authFetch('/api/publishing-queue/' + id + '/retry', { method: 'POST' });
+            if (!r.ok) { const err = await r.json().catch(() => ({})); alert('Error: ' + (err.detail || JSON.stringify(err))); return; }
+            loadPublishingQueue();
+        }
+        async function cancelPublishingJob(id) {
+            const r = await authFetch('/api/publishing-queue/' + id + '/cancel', { method: 'POST' });
+            if (!r.ok) { const err = await r.json().catch(() => ({})); alert('Error: ' + (err.detail || JSON.stringify(err))); return; }
+            loadPublishingQueue();
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('pq-refresh')?.addEventListener('click', loadPublishingQueue);
+            document.getElementById('pq-process-due')?.addEventListener('click', async () => {
+                const r = await authFetch('/api/publishing-queue/process-due', { method: 'POST' });
+                if (r.ok) loadPublishingQueue();
+            });
+        });
+
+        // ----- Content Pipeline -----
+        async function loadContentPipeline() {
+            const influencer = document.getElementById('cp-influencer')?.value || '';
+            const status = document.getElementById('cp-status')?.value || '';
+            const url = '/api/content-pipeline?limit=50' + (influencer ? '&influencer_id=' + influencer : '') + (status ? '&status=' + status : '');
+            const res = await authFetch(url);
+            const data = await res.json().catch(() => ({ items: [] }));
+            const videos = data.items || [];
+            const tbody = document.getElementById('content-pipeline-table');
+            if (!tbody) return;
+            tbody.innerHTML = videos.map(v => `<tr>
+                <td>${v.id}</td><td>${v.account}</td><td>${(v.title || '-').substring(0, 40)}</td><td><span class="status-badge ${statusClass(v.status)}">${v.status}</span></td><td>${v.progress != null ? v.progress + '%' : '-'}</td><td style="color:#ff4444;font-size:11px">${v.error_message || '-'}</td>
+                <td>
+                    ${v.status === 'reviewing' ? `<button class="btn btn-success" onclick="approveContent(${v.id})">Approve</button><button class="btn btn-danger" onclick="rejectContent(${v.id})">Reject</button>` : ''}
+                    ${v.final_path ? `<a href="/api/video-studio/output/${v.id}" target="_blank" class="btn btn-primary">Preview</a>` : ''}
+                </td>
+            </tr>`).join('') || '<tr><td colspan="7" style="color:#888">No pipeline items.</td></tr>';
+        }
+        async function approveContent(id) {
+            const r = await authFetch('/api/content-pipeline/' + id + '/approve', { method: 'POST' });
+            if (!r.ok) { const err = await r.json().catch(() => ({})); alert('Error: ' + (err.detail || JSON.stringify(err))); return; }
+            loadContentPipeline();
+        }
+        async function rejectContent(id) {
+            const reason = prompt('Rejection reason (optional):');
+            const r = await authFetch('/api/content-pipeline/' + id + '/reject', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
+            if (!r.ok) { const err = await r.json().catch(() => ({})); alert('Error: ' + (err.detail || JSON.stringify(err))); return; }
+            loadContentPipeline();
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('cp-refresh')?.addEventListener('click', loadContentPipeline);
+        });
+
+        // ----- Automation -----
+        async function loadAutomationSettings() {
+            const res = await authFetch('/api/automation/settings');
+            const data = await res.json().catch(() => ({}));
+            if (data.enabled !== undefined) document.getElementById('auto-enabled').checked = data.enabled;
+            if (data.require_approval !== undefined) document.getElementById('auto-approval').checked = data.require_approval;
+            if (data.auto_generate_content !== undefined) document.getElementById('auto-generate').checked = data.auto_generate_content;
+            if (data.auto_create_video !== undefined) document.getElementById('auto-video').checked = data.auto_create_video;
+            if (data.auto_schedule !== undefined) document.getElementById('auto-schedule').checked = data.auto_schedule;
+            if (data.max_daily_posts !== undefined) document.getElementById('auto-max-posts').value = data.max_daily_posts;
+            if (data.min_delay_seconds !== undefined) document.getElementById('auto-min-delay').value = data.min_delay_seconds;
+        }
+        async function loadRateLimits() {
+            const res = await authFetch('/api/automation/rate-limits');
+            const data = await res.json().catch(() => ({}));
+            const el = document.getElementById('rate-limits');
+            if (!el) return;
+            el.innerHTML = Object.entries(data).map(([k, v]) => `<div style="display:flex;justify-content:space-between;padding:4px 0"><span style="color:#aaa;text-transform:capitalize">${k}</span><span style="color:#eee">${v}</span></div>`).join('');
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('auto-save')?.addEventListener('click', async () => {
+                const payload = {
+                    enabled: document.getElementById('auto-enabled').checked,
+                    require_approval: document.getElementById('auto-approval').checked,
+                    auto_generate_content: document.getElementById('auto-generate').checked,
+                    auto_create_video: document.getElementById('auto-video').checked,
+                    auto_schedule: document.getElementById('auto-schedule').checked,
+                    max_daily_posts: parseInt(document.getElementById('auto-max-posts').value) || 5,
+                    min_delay_seconds: parseInt(document.getElementById('auto-min-delay').value) || 3600,
+                };
+                const r = await authFetch('/api/automation/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                const status = document.getElementById('auto-status');
+                if (r.ok) { status.textContent = 'Settings saved'; status.style.color = '#44ff44'; } else { status.textContent = 'Save failed'; status.style.color = '#ff4444'; }
+            });
+            loadAutomationSettings();
+            loadRateLimits();
+        });
 
         // ----- Prompt Library -----
         async function loadPrompt(account) {
@@ -1232,6 +1407,9 @@
         loadVideoStudioImageHistory();
         loadContentDrafts();
         loadPublishingQueue();
+        loadContentPipeline();
+        loadAutomationSettings();
+        loadRateLimits();
         loadSettings();
         setInterval(loadData, 60000);
     </script>

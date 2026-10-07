@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func, case
 
 from core.db import get_session
-from core.models import Video, ApiKey, EmailThread, PipelineRun, AuditLog, VideoMetrics, Influencer, VoicePreset, SocialConnection, ContentCalendarEntry, ImageGenerationHistory, AnalyticsSnapshot
+from core.models import Video, ApiKey, EmailThread, PipelineRun, AuditLog, VideoMetrics, Influencer, VoicePreset, SocialConnection, ContentCalendarEntry, ImageGenerationHistory, AnalyticsSnapshot, ContentTemplate, PublishingQueue
 from core import audit
 from config.settings import (
     settings,
@@ -1570,4 +1570,322 @@ async def get_video_studio_status(video_id: int):
             "final_path": v.final_path,
             "rendering_time": v.rendering_time,
             "created_at": v.created_at.isoformat() if v.created_at else None,
+        }
+
+
+# ============================================================
+# CONTENT TEMPLATES
+# ============================================================
+
+@router.get("/content-templates")
+async def list_content_templates(
+    platform: Optional[str] = None,
+    content_style: Optional[str] = None,
+    niche: Optional[str] = None,
+):
+    """List active content templates with optional filters."""
+    import pipeline.content_templates as ct
+    return ct.list_templates(platform=platform, content_style=content_style, niche=niche)
+
+
+@router.get("/content-templates/{template_id}")
+async def get_content_template(template_id: int):
+    """Get a single content template."""
+    import pipeline.content_templates as ct
+    tpl = ct.get_template(template_id)
+    if not tpl:
+        raise HTTPException(404, "Template not found")
+    return tpl
+
+
+@router.post("/content-templates")
+async def create_content_template(payload: dict = Body(...)):
+    """Create a new content template."""
+    import pipeline.content_templates as ct
+    return ct.create_template(payload)
+
+
+@router.put("/content-templates/{template_id}")
+async def update_content_template(template_id: int, payload: dict = Body(...)):
+    """Update an existing template."""
+    import pipeline.content_templates as ct
+    result = ct.update_template(template_id, payload)
+    if not result:
+        raise HTTPException(404, "Template not found")
+    return result
+
+
+@router.delete("/content-templates/{template_id}")
+async def delete_content_template(template_id: int):
+    """Soft-delete a template."""
+    import pipeline.content_templates as ct
+    ok = ct.delete_template(template_id)
+    if not ok:
+        raise HTTPException(404, "Template not found")
+    return {"deleted": True}
+
+
+# ============================================================
+# PUBLISHING QUEUE
+# ============================================================
+
+@router.get("/publishing-queue")
+async def list_publishing_queue(
+    platform: Optional[str] = None,
+    account: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    """List publishing queue jobs."""
+    import pipeline.publishing_queue as pq
+    return pq.list_queue(platform=platform, account=account, status=status, limit=limit)
+
+
+@router.get("/publishing-queue/{queue_id}")
+async def get_publishing_queue_job(queue_id: int):
+    """Get a single queue job."""
+    import pipeline.publishing_queue as pq
+    job = pq.get_queue_job(queue_id)
+    if not job:
+        raise HTTPException(404, "Queue job not found")
+    return job
+
+
+@router.post("/publishing-queue")
+async def enqueue_publishing_job(payload: dict = Body(...)):
+    """Add a video to the publishing queue for a specific platform."""
+    import pipeline.publishing_queue as pq
+    required = ["video_id", "platform", "account"]
+    for r in required:
+        if r not in payload:
+            raise HTTPException(400, f"Missing required field: {r}")
+    try:
+        result = pq.enqueue_publish(
+            video_id=int(payload["video_id"]),
+            platform=str(payload["platform"]),
+            account=str(payload["account"]),
+            influencer_id=payload.get("influencer_id"),
+            title=payload.get("title"),
+            description=payload.get("description"),
+            caption=payload.get("caption"),
+            hashtags=payload.get("hashtags"),
+            thumbnail_path=payload.get("thumbnail_path"),
+            scheduled_at=datetime.fromisoformat(payload["scheduled_at"]) if payload.get("scheduled_at") else None,
+            max_retries=int(payload.get("max_retries", 3)),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return result
+
+
+@router.post("/publishing-queue/{queue_id}/cancel")
+async def cancel_publishing_job(queue_id: int):
+    """Cancel a queued publishing job."""
+    import pipeline.publishing_queue as pq
+    ok = pq.cancel_queue_job(queue_id)
+    if not ok:
+        raise HTTPException(400, "Cannot cancel job")
+    return {"cancelled": True}
+
+
+@router.post("/publishing-queue/{queue_id}/retry")
+async def retry_publishing_job(queue_id: int):
+    """Retry a failed or cancelled publishing job."""
+    import pipeline.publishing_queue as pq
+    result = pq.retry_queue_job(queue_id)
+    if not result:
+        raise HTTPException(404, "Queue job not found")
+    if "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@router.post("/publishing-queue/{queue_id}/process")
+async def process_publishing_job(queue_id: int):
+    """Manually trigger processing of a single queue job."""
+    import pipeline.publishing_queue as pq
+    result = pq.process_queue_job(queue_id)
+    if "error" in result and result["error"] == "not_found":
+        raise HTTPException(404, "Queue job not found")
+    return result
+
+
+@router.post("/publishing-queue/process-due")
+async def process_due_publishing_jobs():
+    """Manually trigger processing of all due queue jobs."""
+    import pipeline.publishing_queue as pq
+    pq.process_due_jobs()
+    return {"processed": True}
+
+
+@router.get("/publishing-queue/export/{queue_id}")
+async def get_manual_export(queue_id: int):
+    """Download manual export package for a failed job."""
+    import pipeline.publishing_queue as pq
+    job = pq.get_queue_job(queue_id)
+    if not job or not job.get("export_path"):
+        raise HTTPException(404, "Export not available")
+    p = Path(job["export_path"])
+    if not p.exists():
+        raise HTTPException(404, "Export file missing")
+    return FileResponse(
+        path=str(p),
+        media_type="application/zip",
+        filename=f"export_{queue_id}_{job['platform']}.zip",
+    )
+
+
+# ============================================================
+# AUTOMATION CONTROLS
+# ============================================================
+
+@router.get("/automation/settings")
+async def get_automation_settings():
+    """Get current automation settings."""
+    return {
+        "enabled": settings.automation_enabled,
+        "require_approval": settings.automation_require_approval,
+        "auto_generate_content": settings.automation_auto_generate_content,
+        "auto_create_video": settings.automation_auto_create_video,
+        "auto_schedule": settings.automation_auto_schedule,
+        "max_daily_posts": settings.automation_max_daily_posts,
+        "min_delay_seconds": settings.automation_min_delay_seconds,
+        "retry_backoff_base": settings.automation_retry_backoff_base,
+        "retry_backoff_max": settings.automation_retry_backoff_max,
+    }
+
+
+@router.put("/automation/settings")
+async def update_automation_settings(payload: dict = Body(...)):
+    """Update automation settings (persisted in-memory, not to DB)."""
+    allowed_fields = {
+        "enabled", "require_approval", "auto_generate_content",
+        "auto_create_video", "auto_schedule", "max_daily_posts",
+        "min_delay_seconds", "retry_backoff_base", "retry_backoff_max",
+    }
+    updated = {}
+    for field, value in payload.items():
+        if field in allowed_fields and hasattr(settings, f"automation_{field}"):
+            setattr(settings, f"automation_{field}", value)
+            updated[field] = value
+    audit.record("automation_settings_updated", actor="dashboard", target="automation",
+                 details=json.dumps(updated))
+    return {"updated": updated}
+
+
+@router.get("/automation/rate-limits")
+async def get_rate_limits():
+    """Get current rate limits per platform."""
+    return {
+        "tiktok": getattr(settings, "max_posts_per_day_tiktok", 5),
+        "youtube": getattr(settings, "max_posts_per_day_youtube", 5),
+        "instagram": getattr(settings, "max_posts_per_day_instagram", 3),
+        "facebook": getattr(settings, "max_posts_per_day_facebook", 3),
+        "total": getattr(settings, "max_posts_per_day", 10),
+    }
+
+
+# ============================================================
+# CONTENT PIPELINE JOBS
+# ============================================================
+
+@router.get("/content-pipeline")
+async def list_content_pipeline(
+    influencer_id: Optional[int] = None,
+    status: Optional[str] = None,
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    """List content pipeline jobs (videos) with optional filters."""
+    limit = _page_size(limit)
+    with get_session() as session:
+        query = session.query(Video).order_by(Video.created_at.desc())
+        if influencer_id:
+            query = query.filter(Video.influencer_id == influencer_id)
+        if status:
+            query = query.filter(Video.status == status)
+        total = query.count()
+        videos = query.limit(limit).all()
+        items = []
+        for v in videos:
+            items.append({
+                "id": v.id,
+                "account": v.account,
+                "influencer_id": v.influencer_id,
+                "content_id": v.content_id,
+                "status": v.status,
+                "title": v.title,
+                "resolution": v.resolution,
+                "progress": v.progress,
+                "rendering_time": v.rendering_time,
+                "error_message": v.error_message,
+                "final_path": v.final_path,
+                "created_at": v.created_at.isoformat() if v.created_at else None,
+                "published_at": v.published_at.isoformat() if v.published_at else None,
+            })
+    return {"total": total, "limit": limit, "items": items}
+
+
+@router.post("/content-pipeline/{video_id}/approve")
+async def approve_content(video_id: int):
+    """Approve a video for publishing."""
+    with get_session() as session:
+        v = session.query(Video).filter_by(id=video_id).first()
+        if not v:
+            raise HTTPException(404, "Video not found")
+        if v.status != "reviewing":
+            raise HTTPException(400, f"Video is in status: {v.status}")
+        v.status = "approved"
+        session.flush()
+    audit.record("content_approved", actor="dashboard", target=str(video_id))
+    return {"approved": True, "video_id": video_id}
+
+
+@router.post("/content-pipeline/{video_id}/reject")
+async def reject_content(video_id: int, payload: dict = Body(default_factory=dict)):
+    """Reject a video."""
+    reason = payload.get("reason")
+    with get_session() as session:
+        v = session.query(Video).filter_by(id=video_id).first()
+        if not v:
+            raise HTTPException(404, "Video not found")
+        if v.status != "reviewing":
+            raise HTTPException(400, f"Video is in status: {v.status}")
+        v.status = "rejected"
+        v.error_message = reason or "Rejected by user"
+        session.flush()
+    audit.record("content_rejected", actor="dashboard", target=str(video_id),
+                 details={"reason": reason})
+    return {"rejected": True, "video_id": video_id}
+
+
+@router.get("/publishing-queue/analytics/summary")
+async def get_analytics_summary(
+    influencer_id: Optional[int] = None,
+    platform: Optional[str] = None,
+    days: int = Query(default=30, ge=1, le=365),
+):
+    """Get analytics summary (only real data, never fabricated)."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    with get_session() as session:
+        query = session.query(AnalyticsSnapshot).filter(AnalyticsSnapshot.date >= cutoff)
+        if influencer_id:
+            query = query.filter(AnalyticsSnapshot.influencer_id == influencer_id)
+        if platform:
+            query = query.filter(AnalyticsSnapshot.platform == platform)
+        snapshots = query.all()
+        if not snapshots:
+            return {"status": "unavailable", "message": "No analytics data available"}
+        total_views = sum(s.views for s in snapshots)
+        total_likes = sum(s.likes for s in snapshots)
+        total_comments = sum(s.comments for s in snapshots)
+        total_shares = sum(s.shares for s in snapshots)
+        return {
+            "status": "available",
+            "period_days": days,
+            "snapshots": len(snapshots),
+            "total_views": total_views,
+            "total_likes": total_likes,
+            "total_comments": total_comments,
+            "total_shares": total_shares,
+            "avg_engagement_rate": sum(s.engagement_rate for s in snapshots if s.engagement_rate) / max(1, len([s for s in snapshots if s.engagement_rate])),
         }
