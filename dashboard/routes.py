@@ -942,3 +942,61 @@ async def get_image_history(influencer_id: Optional[int] = Query(None)):
             }
             for r in query.all()
         ]
+
+
+@router.get("/content-drafts")
+async def get_content_drafts(influencer_id: Optional[int] = Query(None)):
+    """Return recent video records as content drafts, optionally filtered by influencer_id."""
+    with get_session() as session:
+        query = session.query(Video).order_by(Video.created_at.desc()).limit(50)
+        if influencer_id is not None:
+            query = query.filter(Video.influencer_id == influencer_id)
+        return [
+            {
+                "id": v.id,
+                "influencer_id": v.influencer_id,
+                "account": v.account,
+                "title": v.title,
+                "status": v.status,
+                "quality_score": v.quality_score,
+                "created_at": v.created_at.isoformat() if v.created_at else None,
+            }
+            for v in query.all()
+        ]
+
+
+@router.post("/content-studio/generate")
+async def generate_content_plan(payload: dict = Body(...)):
+    """Generate a content plan using Ollama and create a draft video record."""
+    from core import llm_providers
+
+    topic = payload.get("topic", "")
+    niche = payload.get("niche", "")
+    influencer_id = payload.get("influencer_id")
+
+    if not topic:
+        raise HTTPException(400, "Topic is required")
+
+    prompt = f"Generate a short-form video script about {topic} in the {niche or 'general'} niche. Include a title, hook, script, visual prompts, and hashtags."
+
+    try:
+        result = llm_providers.generate_text(
+            prompt,
+            system="You are a creative social media content writer. Respond in the requested format.",
+            temperature=0.7,
+            max_tokens=2000,
+        )
+    except Exception as exc:
+        raise HTTPException(500, f"Content generation failed: {exc}")
+
+    with get_session() as session:
+        video = Video(
+            account=payload.get("account", "terror"),
+            influencer_id=influencer_id,
+            title=topic,
+            status="draft",
+            script_text=result.text,
+        )
+        session.add(video)
+        session.flush()
+        return {"id": video.id, "title": video.title, "status": video.status}

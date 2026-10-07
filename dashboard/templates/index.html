@@ -131,14 +131,18 @@
         <button class="tab-btn" data-tab="influencers">Influencers</button>
         <button class="tab-btn" data-tab="image-studio">Image Studio</button>
         <button class="tab-btn" data-tab="video-studio">Video Studio</button>
+        <button class="tab-btn" data-tab="content-studio">Content Studio</button>
+        <button class="tab-btn" data-tab="publishing-queue">Publishing Queue</button>
         <button class="tab-btn" data-tab="calendar">Calendar</button>
         <button class="tab-btn" data-tab="platforms">Platforms</button>
+        <button class="tab-btn" data-tab="prompts">Prompt Library</button>
+        <button class="tab-btn" data-tab="settings">Settings</button>
         <button class="tab-btn" data-tab="videos">Videos</button>
         <button class="tab-btn" data-tab="providers">LLM Providers</button>
         <button class="tab-btn" data-tab="keys">API Keys</button>
         <button class="tab-btn" data-tab="emails">Emails</button>
         <button class="tab-btn" data-tab="analytics">Analytics</button>
-        <button class="tab-btn" data-tab="audit">Audit</button>
+        <button class="tab-btn" data-tab="audit">Audit Logs</button>
     </div>
 
     <!-- Overview tab -->
@@ -243,6 +247,55 @@
         </div>
     </div>
 
+    <!-- Content Studio tab -->
+    <div class="tab-pane" data-pane="content-studio">
+        <div class="section">
+            <h2>Content Studio</h2>
+            <div class="card" style="margin-bottom:16px">
+                <h3 style="color:#00f2ea;margin-bottom:10px">Create Content</h3>
+                <div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
+                    <select id="cs-influencer" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px"><option value="">Select Influencer</option></select>
+                    <select id="cs-niche" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                        <option value="">Select Niche</option>
+                        <option value="technology">Technology</option>
+                        <option value="fitness">Fitness</option>
+                        <option value="travel">Travel</option>
+                        <option value="fashion">Fashion</option>
+                        <option value="gaming">Gaming</option>
+                        <option value="education">Education</option>
+                    </select>
+                    <input id="cs-topic" placeholder="Topic" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                    <button id="cs-generate" class="btn btn-primary">Generate Content Plan</button>
+                </div>
+                <div id="cs-status" style="margin-top:10px;color:#888;font-size:12px"></div>
+            </div>
+            <div class="card">
+                <h3 style="color:#00f2ea;margin-bottom:10px">Content Drafts</h3>
+                <table>
+                    <thead>
+                        <tr><th>ID</th><th>Influencer</th><th>Topic</th><th>Status</th><th>Created</th></tr>
+                    </thead>
+                    <tbody id="cs-drafts-table"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Publishing Queue tab -->
+    <div class="tab-pane" data-pane="publishing-queue">
+        <div class="section">
+            <h2>Publishing Queue</h2>
+            <div class="card">
+                <table>
+                    <thead>
+                        <tr><th>ID</th><th>Account</th><th>Title</th><th>Status</th><th>Platforms</th><th>Published</th></tr>
+                    </thead>
+                    <tbody id="pub-queue-table"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <!-- Calendar tab -->
     <div class="tab-pane" data-pane="calendar">
         <div class="section">
@@ -272,6 +325,38 @@
         <div class="section">
             <h2>Plataformas por Cuenta</h2>
             <div class="grid" id="platform-grid"></div>
+        </div>
+    </div>
+
+    <!-- Prompt Library tab -->
+    <div class="tab-pane" data-pane="prompts">
+        <div class="section">
+            <h2>Prompt Library</h2>
+            <div class="card">
+                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+                    <select id="prompt-account" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                        <option value="terror">Terror</option>
+                        <option value="historias">Historias</option>
+                        <option value="dinero">Dinero</option>
+                    </select>
+                    <button id="prompt-load" class="btn btn-success">Load Prompt</button>
+                </div>
+                <textarea id="prompt-editor" rows="20" style="width:100%;padding:10px;background:#222;color:#eee;border:1px solid #444;border-radius:4px;font-family:monospace;font-size:12px"></textarea>
+                <div style="margin-top:10px">
+                    <button id="prompt-save" class="btn btn-primary">Save Prompt</button>
+                    <span id="prompt-status" style="margin-left:10px;color:#888;font-size:12px"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings tab -->
+    <div class="tab-pane" data-pane="settings">
+        <div class="section">
+            <h2>Application Settings</h2>
+            <div class="card">
+                <div id="settings-content" style="color:#888">Loading settings...</div>
+            </div>
         </div>
     </div>
 
@@ -821,12 +906,110 @@
             });
         });
 
+        // ----- Content Studio -----
+        async function loadContentDrafts() {
+            const res = await authFetch('/api/content-drafts');
+            const drafts = await res.json().catch(() => []);
+            const tbody = document.getElementById('cs-drafts-table');
+            if (!tbody) return;
+            tbody.innerHTML = drafts.map(d => `<tr>
+                <td>${d.id}</td><td>${d.influencer_id}</td><td>${d.topic || '-'}</td><td>${d.status}</td><td>${formatDate(d.created_at)}</td>
+            </tr>`).join('') || '<tr><td colspan="5" style="color:#888">No drafts yet.</td></tr>';
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('cs-generate')?.addEventListener('click', async () => {
+                const status = document.getElementById('cs-status');
+                if (status) status.textContent = 'Generating content plan...';
+                const payload = {
+                    influencer_id: parseInt(document.getElementById('cs-influencer').value) || null,
+                    niche: document.getElementById('cs-niche').value,
+                    topic: document.getElementById('cs-topic').value.trim(),
+                };
+                const r = await authFetch('/api/content-studio/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                if (!r.ok) { const err = await r.json().catch(() => ({})); alert('Error: ' + (err.detail || JSON.stringify(err))); if (status) status.textContent = ''; return; }
+                const data = await r.json();
+                if (status) status.textContent = 'Created draft: ' + data.id;
+                document.getElementById('cs-topic').value = '';
+                loadContentDrafts();
+            });
+            loadContentDrafts();
+        });
+
+        // ----- Publishing Queue -----
+        async function loadPublishingQueue() {
+            const res = await authFetch('/api/videos?limit=50&status=publishing');
+            const data = await res.json().catch(() => ({ items: [] }));
+            const videos = data.items || [];
+            const tbody = document.getElementById('pub-queue-table');
+            if (!tbody) return;
+            tbody.innerHTML = videos.map(v => {
+                const platforms = [];
+                if (v.tiktok_published) platforms.push('TT');
+                if (v.youtube_published) platforms.push('YT');
+                const results = v.platform_results || {};
+                for (const [platform, result] of Object.entries(results)) {
+                    if (result && result.url) platforms.push(platform.slice(0, 2).toUpperCase());
+                }
+                return `<tr>
+                    <td>${v.id}</td><td>${v.account}</td><td>${(v.title || '-').substring(0, 40)}</td><td>${v.status}</td><td>${platforms.join(', ') || '-'}</td><td>${v.published_at ? formatDate(v.published_at) : '-'}</td>
+                </tr>`;
+            }).join('') || '<tr><td colspan="6" style="color:#888">No publishing queue items.</td></tr>';
+        }
+
+        // ----- Prompt Library -----
+        async function loadPrompt(account) {
+            const res = await authFetch('/api/prompts/' + encodeURIComponent(account));
+            const data = await res.json().catch(() => ({}));
+            const editor = document.getElementById('prompt-editor');
+            if (editor && data.content) editor.value = data.content;
+        }
+        async function savePrompt(account) {
+            const content = document.getElementById('prompt-editor').value;
+            const r = await authFetch('/api/prompts/' + encodeURIComponent(account), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(content),
+            });
+            const status = document.getElementById('prompt-status');
+            if (!r.ok) { status.textContent = 'Save failed'; status.style.color = '#ff4444'; return; }
+            status.textContent = 'Saved at ' + new Date().toLocaleTimeString('es');
+            status.style.color = '#44ff44';
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('prompt-load')?.addEventListener('click', () => {
+                const account = document.getElementById('prompt-account').value;
+                loadPrompt(account);
+            });
+            document.getElementById('prompt-save')?.addEventListener('click', () => {
+                const account = document.getElementById('prompt-account').value;
+                savePrompt(account);
+            });
+        });
+
+        // ----- Settings -----
+        async function loadSettings() {
+            const res = await authFetch('/api/settings');
+            const data = await res.json().catch(() => ({}));
+            const container = document.getElementById('settings-content');
+            if (!container) return;
+            const rows = Object.entries(data).map(([key, value]) => `
+                <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #2a2a4a">
+                    <span style="color:#aaa;font-family:monospace">${key}</span>
+                    <span style="color:#eee">${value !== null ? value : ''}</span>
+                </div>
+            `).join('');
+            container.innerHTML = rows || '<p style="color:#888">No settings available.</p>';
+        }
+
         loadData();
         loadInfluencers();
         loadCalendar();
         loadImageBackends();
         loadImageHistory();
         loadVideoStudio();
+        loadContentDrafts();
+        loadPublishingQueue();
+        loadSettings();
         setInterval(loadData, 60000);
     </script>
 </body>

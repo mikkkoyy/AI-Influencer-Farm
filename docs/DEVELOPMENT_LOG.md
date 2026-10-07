@@ -67,3 +67,67 @@ This file records every development prompt, implementation summary, test results
 
 ### Recommended Next Task
 Implement ComfyUI image generation backend and Image Studio page.
+
+---
+
+## Entry 2 — Local Image Generation (ComfyUI & AUTOMATIC1111)
+
+**Date:** 2026-10-07  
+**Task:** Task 4 — Finish local image generation  
+**Branch:** main  
+**Commit:** d482f83
+
+### Implementation Summary
+- Created `pipeline/image_gen.py` with ComfyUI and AUTOMATIC1111 backends
+- Implemented ComfyUI workflow builder for txt2img
+- Implemented A1111 txt2img integration
+- Added health check endpoints for both backends
+- Added API endpoints:
+  - `GET /api/image-generation/backends` — health check
+  - `POST /api/image-generation/generate` — generate image
+  - `GET /api/image-generation/history` — generation history
+- Added Image Studio tab to dashboard with:
+  - Backend selection (ComfyUI / A1111)
+  - Prompt and negative prompt inputs
+  - Width, height, steps, CFG controls
+  - Influencer association
+  - Backend status display
+  - Recent images grid
+- Added `image_gen_base_url`, `image_gen_default_steps`, `image_gen_default_cfg`, `image_gen_default_width`, `image_gen_default_height` to settings
+- Persisted image generation history in SQLite via `ImageGenerationHistory` model
+- Added 8 unit tests for image generation module
+
+### Files Changed
+- `pipeline/image_gen.py` — New file (ComfyUI and A1111 backends)
+- `tests/test_image_generation.py` — New file (8 tests)
+- `config/settings.py` — Added image generation settings
+- `dashboard/routes.py` — Added image generation endpoints
+- `dashboard/templates/index.html` — Added Image Studio tab
+
+### Tests Performed
+- `pytest tests/test_image_generation.py` — 8 passed
+- `pytest tests/` — 24 passed, 1 warning
+- Backend health check — PASS
+
+### Test Results
+- PASS: 8/8 image generation tests
+- PASS: 24/24 total tests
+- BLOCKED: GitHub push (no authentication)
+
+### Commit Hash
+d482f83
+
+### Commit Message
+feat(image-studio): add ComfyUI and AUTOMATIC1111 integration
+
+### GitHub Push Status
+**BLOCKED** — Repository not found. Target repository must be created and authentication configured.
+
+### Outstanding Issues
+1. ComfyUI/A1111 not installed on this machine — integration untested with real backends
+2. Reference image support not yet implemented
+3. Image preview in dashboard uses placeholder (needs static file serving)
+4. GitHub authentication required for push
+
+### Recommended Next Task
+Implement video production pipeline (FFmpeg rendering, narration, subtitles).
