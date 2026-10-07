@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Body, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from sqlalchemy import func, case
 
 from core.db import get_session
@@ -27,6 +28,7 @@ from config.settings import (
     BASE_DIR,
 )
 import pipeline.image_gen
+import pipeline.video_assembler as video_assembler
 
 router = APIRouter()
 
@@ -82,9 +84,13 @@ async def get_videos(
             {
                 "id": v.id,
                 "account": v.account,
+                "influencer_id": v.influencer_id,
                 "status": v.status,
                 "title": v.title,
                 "quality_score": v.quality_score,
+                "resolution": v.resolution,
+                "progress": v.progress,
+                "rendering_time": v.rendering_time,
                 "drive_url": v.drive_url,
                 "tiktok_url": v.tiktok_url,
                 "youtube_url": v.youtube_url,
@@ -113,12 +119,18 @@ async def get_video(video_id: int):
         return {
             "id": v.id,
             "account": v.account,
+            "influencer_id": v.influencer_id,
+            "content_id": v.content_id,
             "status": v.status,
             "title": v.title,
             "hook": v.hook,
             "script_text": v.script_text,
             "quality_score": v.quality_score,
             "quality_notes": v.quality_notes,
+            "resolution": v.resolution,
+            "progress": v.progress,
+            "rendering_time": v.rendering_time,
+            "config": _json_map(v.config_json),
             "drive_url": v.drive_url,
             "tiktok_url": v.tiktok_url,
             "youtube_url": v.youtube_url,
@@ -1215,3 +1227,347 @@ async def generate_content_plan(payload: dict = Body(...)):
         session.add(video)
         session.flush()
         return {"id": video.id, "title": video.title, "status": video.status}
+
+
+# ============================================================
+# VIDEO STUDIO — direct video composition from selected assets
+# ============================================================
+
+@router.post("/video-studio/create")
+async def create_video_studio_job(
+    account: str = Form(...),
+    title: str = Form(""),
+    influencer_id: Optional[int] = Form(None),
+    content_id: Optional[int] = Form(None),
+    narration_text: Optional[str] = Form(None),
+    caption_text: Optional[str] = Form(None),
+    resolution: str = Form("1080x1920"),
+    fps: int = Form(30),
+    include_subtitles: bool = Form(True),
+    include_narration: bool = Form(True),
+    music_path: Optional[str] = Form(None),
+    images: Optional[list[UploadFile]] = File(None),
+    image_paths_json: Optional[str] = Form(None),
+):
+    """Create a video job from selected images, optional narration, and captions.
+
+    Accepts either:
+    - `images` multipart uploads (preferred for new uploads)
+    - `image_paths_json` JSON array of existing local file paths
+    """
+    if account not in list_account_ids():
+        raise HTTPException(400, f"Unknown account: {account}")
+
+    # Collect image paths
+    validated_images = []
+    upload_dir = Path(settings.db_path).parent / "storage" / "video-uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    if images:
+        for upload in images:
+            if not upload.filename:
+                continue
+            safe_name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in upload.filename)
+            dest = upload_dir / f"vs_{int(time.time()*1000)}_{safe_name[:80]}"
+            content = await upload.read()
+            if len(content) > 50 * 1024 * 1024:
+                raise HTTPException(400, f"Image too large (max 50 MB): {upload.filename}")
+            dest.write_bytes(content)
+            validated_images.append(str(dest))
+
+    if image_paths_json:
+        try:
+            raw_paths = json.loads(image_paths_json)
+            if not isinstance(raw_paths, list):
+                raise ValueError("must be a list")
+            for p in raw_paths:
+                resolved = video_assembler._safe_path(p, must_exist=True)
+                validated_images.append(str(resolved))
+        except Exception as exc:
+            raise HTTPException(400, f"Invalid image_paths_json: {exc}")
+
+    if not validated_images:
+        raise HTTPException(400, "No images provided. Upload images or supply image_paths_json.")
+
+    # Validate music path if provided
+    resolved_music = None
+    if music_path:
+        try:
+            resolved_music = str(video_assembler._safe_path(music_path, must_exist=True))
+        except Exception as exc:
+            raise HTTPException(400, f"Invalid music_path: {exc}")
+
+    output_dir = Path(settings.db_path).parent / "output" / account
+    video_id = None
+    with get_session() as session:
+        video = Video(
+            account=account,
+            influencer_id=influencer_id,
+            content_id=content_id,
+            title=title,
+            status="queued",
+            resolution=resolution,
+            config_json=json.dumps({
+                "fps": fps,
+                "include_subtitles": include_subtitles,
+                "include_narration": include_narration,
+                "music_path": resolved_music,
+                "image_count": len(validated_images),
+            }, ensure_ascii=False),
+            progress=0,
+        )
+        session.add(video)
+        session.flush()
+        video_id = video.id
+
+    if video_id is None:
+        raise HTTPException(500, "Failed to create video record")
+
+    audit.record("video_studio_created", actor="dashboard", target=str(video_id),
+                 details={"account": account, "images": len(validated_images)})
+
+    # Run assembly in background thread
+    import threading
+    def _background_run():
+        video_assembler.run_video_job(
+            video_id=video_id,
+            db_session_factory=get_session,
+            account=account,
+            image_paths=validated_images,
+            output_dir=output_dir / str(video_id),
+            title=title,
+            narration_text=narration_text,
+            caption_text=caption_text,
+            resolution=resolution,
+            fps=fps,
+            music_path=resolved_music,
+            include_subtitles=include_subtitles,
+            include_narration=include_narration,
+        )
+
+    t = threading.Thread(target=_background_run, daemon=True)
+    t.start()
+
+    return {
+        "queued": True,
+        "video_id": video_id,
+        "account": account,
+        "images": len(validated_images),
+    }
+
+
+@router.get("/video-studio/jobs")
+async def list_video_studio_jobs(
+    account: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    """List video jobs with filtering."""
+    limit = _page_size(limit)
+    with get_session() as session:
+        query = session.query(Video).order_by(Video.created_at.desc())
+        if account:
+            query = query.filter(Video.account == account)
+        if status:
+            query = query.filter(Video.status == status)
+        total = query.count()
+        videos = query.limit(limit).all()
+        items = []
+        for v in videos:
+            items.append({
+                "id": v.id,
+                "account": v.account,
+                "influencer_id": v.influencer_id,
+                "content_id": v.content_id,
+                "status": v.status,
+                "title": v.title,
+                "resolution": v.resolution,
+                "progress": v.progress,
+                "rendering_time": v.rendering_time,
+                "error_message": v.error_message,
+                "final_path": v.final_path,
+                "created_at": v.created_at.isoformat() if v.created_at else None,
+            })
+    return {"total": total, "limit": limit, "items": items}
+
+
+@router.get("/video-studio/jobs/{video_id}")
+async def get_video_studio_job(video_id: int):
+    """Get detailed status for a video job."""
+    with get_session() as session:
+        v = session.query(Video).filter_by(id=video_id).first()
+        if not v:
+            raise HTTPException(404, "Video not found")
+        validation = None
+        if v.final_path:
+            try:
+                validation = video_assembler.validate_mp4(v.final_path)
+            except Exception:
+                validation = None
+        return {
+            "id": v.id,
+            "account": v.account,
+            "influencer_id": v.influencer_id,
+            "content_id": v.content_id,
+            "status": v.status,
+            "title": v.title,
+            "resolution": v.resolution,
+            "progress": v.progress,
+            "rendering_time": v.rendering_time,
+            "error_message": v.error_message,
+            "config": _json_map(v.config_json),
+            "final_path": v.final_path,
+            "narration_path": v.narration_path,
+            "subtitle_path": v.subtitle_path,
+            "video_clips": _json_map(v.video_clips) if v.video_clips else [],
+            "validation": validation,
+            "created_at": v.created_at.isoformat() if v.created_at else None,
+            "published_at": v.published_at.isoformat() if v.published_at else None,
+        }
+
+
+@router.post("/video-studio/jobs/{video_id}/retry")
+async def retry_video_studio_job(video_id: int):
+    """Retry a failed or cancelled video job from its last known state."""
+    with get_session() as session:
+        v = session.query(Video).filter_by(id=video_id).first()
+        if not v:
+            raise HTTPException(404, "Video not found")
+        if v.status not in {"failed", "cancelled", "queued"}:
+            raise HTTPException(400, f"Cannot retry job in status: {v.status}")
+
+        # Reset status but keep config
+        v.status = "queued"
+        v.error_message = None
+        v.progress = 0
+        v.final_path = None
+        session.flush()
+
+    audit.record("video_studio_retry", actor="dashboard", target=str(video_id))
+
+    # Re-run in background
+    config = {}
+    video_clips_raw = None
+    account = None
+    influencer_id = None
+    title = ""
+    script_text = None
+    resolution = "1080x1920"
+    with get_session() as session:
+        v = session.query(Video).filter_by(id=video_id).first()
+        if v:
+            account = v.account
+            influencer_id = v.influencer_id
+            title = v.title or ""
+            script_text = v.script_text
+            resolution = v.resolution or "1080x1920"
+            if v.config_json:
+                try:
+                    config = json.loads(v.config_json)
+                except Exception:
+                    pass
+            video_clips_raw = v.video_clips
+
+    image_paths = []
+    if video_clips_raw:
+        try:
+            clips = json.loads(video_clips_raw)
+            if isinstance(clips, list):
+                image_paths = [c for c in clips if Path(c).exists()]
+        except Exception:
+            pass
+
+    # Fallback to stored image history if no clips
+    if not image_paths and influencer_id is not None:
+        with get_session() as session:
+            hist = session.query(ImageGenerationHistory).filter(
+                ImageGenerationHistory.influencer_id == influencer_id
+            ).order_by(ImageGenerationHistory.created_at.desc()).limit(10).all()
+            image_paths = [h.image_path for h in hist if Path(h.image_path).exists()]
+
+    if not image_paths:
+        raise HTTPException(400, "No source images available for retry")
+
+    import threading
+    output_dir = Path(settings.db_path).parent / "output" / (account or "terror") / str(video_id)
+    def _background_run():
+        video_assembler.run_video_job(
+            video_id=video_id,
+            db_session_factory=get_session,
+            account=account or "terror",
+            image_paths=image_paths,
+            output_dir=output_dir,
+            title=title,
+            caption_text=script_text,
+            resolution=resolution,
+            fps=int(config.get("fps", 30)),
+            music_path=config.get("music_path"),
+            include_subtitles=bool(config.get("include_subtitles", True)),
+            include_narration=bool(config.get("include_narration", True)),
+        )
+
+    t = threading.Thread(target=_background_run, daemon=True)
+    t.start()
+
+    return {"queued": True, "video_id": video_id}
+
+
+@router.post("/video-studio/jobs/{video_id}/cancel")
+async def cancel_video_studio_job(video_id: int):
+    """Cancel a queued video job. Jobs already processing cannot be safely interrupted."""
+    with get_session() as session:
+        v = session.query(Video).filter_by(id=video_id).first()
+        if not v:
+            raise HTTPException(404, "Video not found")
+        if v.status in {"completed", "published", "failed"}:
+            raise HTTPException(400, f"Cannot cancel job in status: {v.status}")
+        if v.status == "processing":
+            # On Windows we cannot safely kill the FFmpeg subprocess from another thread
+            # without more invasive process-group management. Mark as cancelled so
+            # the next poll skips it; the in-flight process will finish but output
+            # will be ignored.
+            v.status = "cancelling"
+            v.error_message = "Cancellation requested; FFmpeg may still complete in background"
+        else:
+            v.status = "cancelled"
+            v.error_message = "Job cancelled by user"
+        session.flush()
+    audit.record("video_studio_cancel", actor="dashboard", target=str(video_id))
+    return {"cancelled": True, "video_id": video_id}
+
+
+@router.get("/video-studio/output/{video_id}")
+async def get_video_output(video_id: int):
+    """Serve the final video file for a completed job."""
+    with get_session() as session:
+        v = session.query(Video).filter_by(id=video_id).first()
+        if not v:
+            raise HTTPException(404, "Video not found")
+        if not v.final_path:
+            raise HTTPException(404, "No output file for this video")
+        p = Path(v.final_path)
+        if not p.exists():
+            raise HTTPException(404, "Output file missing on disk")
+        return FileResponse(
+            path=str(p),
+            media_type="video/mp4",
+            filename=f"video_{v.id}_{v.account}.mp4",
+        )
+
+
+@router.get("/video-studio/status/{video_id}")
+async def get_video_studio_status(video_id: int):
+    """Get real-time status and progress for a video job."""
+    with get_session() as session:
+        v = session.query(Video).filter_by(id=video_id).first()
+        if not v:
+            raise HTTPException(404, "Video not found")
+        return {
+            "id": v.id,
+            "status": v.status,
+            "progress": v.progress or 0,
+            "error_message": v.error_message,
+            "final_path": v.final_path,
+            "rendering_time": v.rendering_time,
+            "created_at": v.created_at.isoformat() if v.created_at else None,
+        }

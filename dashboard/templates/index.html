@@ -230,25 +230,44 @@
         <div class="section">
             <h2>Video Studio</h2>
             <div class="card" style="margin-bottom:16px">
-                <h3 style="color:#00f2ea;margin-bottom:10px">Produce Video</h3>
+                <h3 style="color:#00f2ea;margin-bottom:10px">Create Video</h3>
                 <div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
-                    <select id="vid-account" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                    <select id="vs-account" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
                         <option value="terror">Terror</option>
                         <option value="historias">Historias</option>
                         <option value="dinero">Dinero</option>
                     </select>
-                    <input id="vid-title" placeholder="Title (optional)" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
-                    <button id="vid-produce" class="btn btn-primary">Produce Video</button>
+                    <select id="vs-influencer" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                        <option value="">Select Influencer (optional)</option>
+                    </select>
+                    <input id="vs-title" placeholder="Title (optional)" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                    <input id="vs-resolution" placeholder="Resolution" value="1080x1920" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                    <input id="vs-fps" type="number" placeholder="FPS" value="30" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                    <input id="vs-narration" placeholder="Narration text (optional)" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                    <input id="vs-captions" placeholder="Captions text (optional)" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                    <label style="display:flex;align-items:center;gap:6px;color:#aaa;font-size:12px">
+                        <input id="vs-subtitles" type="checkbox" checked> Subtitles
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;color:#aaa;font-size:12px">
+                        <input id="vs-audio" type="checkbox" checked> Narration
+                    </label>
+                    <input id="vs-music" placeholder="Music path (optional)" style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                    <input id="vs-images-json" placeholder='Image paths JSON ["a.png","b.png"]' style="padding:6px;background:#222;color:#eee;border:1px solid #444;border-radius:4px">
+                    <button id="vs-create" class="btn btn-primary">Create Video</button>
                 </div>
-                <div id="vid-status" style="margin-top:10px;color:#888;font-size:12px"></div>
+                <div id="vs-status" style="margin-top:10px;color:#888;font-size:12px"></div>
+            </div>
+            <div class="card" style="margin-bottom:16px">
+                <h3 style="color:#00f2ea;margin-bottom:10px">Recent Generated Images</h3>
+                <div id="vs-image-history" style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))"></div>
             </div>
             <div class="card">
-                <h3 style="color:#00f2ea;margin-bottom:10px">Recent Videos</h3>
+                <h3 style="color:#00f2ea;margin-bottom:10px">Video Jobs</h3>
                 <table>
                     <thead>
-                        <tr><th>ID</th><th>Account</th><th>Title</th><th>Status</th><th>Score</th><th>Created</th></tr>
+                        <tr><th>ID</th><th>Account</th><th>Title</th><th>Status</th><th>Progress</th><th>Resolution</th><th>Error</th><th>Actions</th></tr>
                     </thead>
-                    <tbody id="video-studio-table"></tbody>
+                    <tbody id="vs-jobs-table"></tbody>
                 </table>
             </div>
         </div>
@@ -939,7 +958,7 @@
             const container = document.getElementById('img-history');
             if (!container) return;
             container.innerHTML = items.map(img => {
-                const displaySrc = img.is_reference ? img.image_path : (img.image_path.startsWith('/') ? img.image_path : `/generated-images/${Path.basename(img.image_path)}`);
+                const displaySrc = img.is_reference ? img.image_path : (img.image_path.startsWith('/') ? img.image_path : '/generated-images/' + img.image_path.split(/[\\/]/).pop());
                 return `
                 <div style="background:#222;border-radius:6px;overflow:hidden">
                     <img src="${displaySrc}" style="width:100%;height:200px;object-fit:cover;background:#333" onerror="this.src='/static/placeholder.png'">
@@ -994,29 +1013,119 @@
         });
 
         // ----- Video Studio -----
-        async function loadVideoStudio() {
-            const res = await authFetch('/api/videos?limit=10');
+        async function loadVideoStudioJobs() {
+            const res = await authFetch('/api/video-studio/jobs?limit=50');
             const data = await res.json().catch(() => ({ items: [] }));
-            const videos = data.items || [];
-            const tbody = document.getElementById('video-studio-table');
+            const jobs = data.items || [];
+            const tbody = document.getElementById('vs-jobs-table');
             if (!tbody) return;
-            tbody.innerHTML = videos.map(v => `<tr>
-                <td>${v.id}</td><td>${v.account}</td><td>${(v.title || '-').substring(0, 40)}</td><td>${v.status}</td><td>${v.quality_score ? v.quality_score.toFixed(1) : '-'}</td><td>${formatDate(v.created_at)}</td>
-            </tr>`).join('') || '<tr><td colspan="6" style="color:#888">No videos yet.</td></tr>';
+            tbody.innerHTML = jobs.map(v => `<tr>
+                <td>${v.id}</td>
+                <td>${v.account}</td>
+                <td>${(v.title || '-').substring(0, 40)}</td>
+                <td><span class="status-badge ${statusClass(v.status)}">${v.status}</span></td>
+                <td>${v.progress != null ? v.progress + '%' : '-'}</td>
+                <td>${v.resolution || '-'}</td>
+                <td style="color:#ff4444;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v.error_message || '-'}</td>
+                <td>
+                    ${v.status === 'completed' && v.final_path ? `<a href="/api/video-studio/output/${v.id}" target="_blank" class="btn btn-success">Preview</a>` : ''}
+                    ${v.status === 'failed' || v.status === 'cancelled' ? `<button class="btn btn-primary" onclick="retryVideoStudioJob(${v.id})">Retry</button>` : ''}
+                    ${v.status === 'queued' || v.status === 'processing' ? `<button class="btn btn-danger" onclick="cancelVideoStudioJob(${v.id})">Cancel</button>` : ''}
+                </td>
+            </tr>`).join('') || '<tr><td colspan="8" style="color:#888">No video jobs yet.</td></tr>';
+        }
+        async function pollVideoStudioJob(videoId) {
+            try {
+                const res = await authFetch('/api/video-studio/status/' + videoId);
+                const data = await res.json().catch(() => null);
+                if (!data) return;
+                const statusEl = document.getElementById('vs-status');
+                if (statusEl) {
+                    statusEl.textContent = `Job ${videoId}: ${data.status} (${data.progress || 0}%)${data.error_message ? ' - ' + data.error_message : ''}`;
+                }
+                if (['completed','failed','cancelled','cancelling'].includes(data.status)) {
+                    loadVideoStudioJobs();
+                } else {
+                    setTimeout(() => pollVideoStudioJob(videoId), 2000);
+                }
+            } catch (e) {
+                setTimeout(() => pollVideoStudioJob(videoId), 3000);
+            }
+        }
+        async function createVideoStudioJob() {
+            const status = document.getElementById('vs-status');
+            if (status) status.textContent = 'Creating job...';
+            const account = document.getElementById('vs-account').value;
+            const form = new FormData();
+            form.append('account', account);
+            form.append('title', document.getElementById('vs-title').value.trim());
+            const infVal = document.getElementById('vs-influencer').value;
+            if (infVal) form.append('influencer_id', infVal);
+            form.append('resolution', document.getElementById('vs-resolution').value.trim() || '1080x1920');
+            form.append('fps', document.getElementById('vs-fps').value.trim() || '30');
+            form.append('narration_text', document.getElementById('vs-narration').value.trim());
+            form.append('caption_text', document.getElementById('vs-captions').value.trim());
+            form.append('include_subtitles', document.getElementById('vs-subtitles').checked ? 'true' : 'false');
+            form.append('include_narration', document.getElementById('vs-audio').checked ? 'true' : 'false');
+            const musicPath = document.getElementById('vs-music').value.trim();
+            if (musicPath) form.append('music_path', musicPath);
+            const imgJson = document.getElementById('vs-images-json').value.trim();
+            if (imgJson) form.append('image_paths_json', imgJson);
+
+            const r = await authFetch('/api/video-studio/create', { method: 'POST', body: form });
+            if (!r.ok) { const err = await r.json().catch(() => ({})); alert('Error: ' + (err.detail || JSON.stringify(err))); if (status) status.textContent = ''; return; }
+            const data = await r.json();
+            if (status) status.textContent = 'Queued: ' + data.video_id + ' (' + data.images + ' images)';
+            document.getElementById('vs-title').value = '';
+            document.getElementById('vs-narration').value = '';
+            document.getElementById('vs-captions').value = '';
+            document.getElementById('vs-images-json').value = '';
+            loadVideoStudioJobs();
+            pollVideoStudioJob(data.video_id);
+        }
+        async function retryVideoStudioJob(id) {
+            const r = await authFetch('/api/video-studio/jobs/' + id + '/retry', { method: 'POST' });
+            if (!r.ok) { const err = await r.json().catch(() => ({})); alert('Error: ' + (err.detail || JSON.stringify(err))); return; }
+            const data = await r.json();
+            document.getElementById('vs-status').textContent = 'Retrying: ' + id;
+            loadVideoStudioJobs();
+            pollVideoStudioJob(id);
+        }
+        async function cancelVideoStudioJob(id) {
+            const r = await authFetch('/api/video-studio/jobs/' + id + '/cancel', { method: 'POST' });
+            if (!r.ok) { const err = await r.json().catch(() => ({})); alert('Error: ' + (err.detail || JSON.stringify(err))); return; }
+            document.getElementById('vs-status').textContent = 'Cancelling: ' + id;
+            loadVideoStudioJobs();
+        }
+        async function loadVideoStudioImageHistory() {
+            const res = await authFetch('/api/image-generation/history');
+            const items = await res.json().catch(() => []);
+            const container = document.getElementById('vs-image-history');
+            if (!container) return;
+            container.innerHTML = items.slice(0, 20).map(img => {
+                    const src = img.image_path.startsWith('/') ? img.image_path : ('/generated-images/' + img.image_path.split(/[\\/]/).pop());
+                return `<div style="background:#222;border-radius:6px;overflow:hidden;cursor:pointer" onclick="selectVideoImage('${img.image_path.replace(\\'/g, \\'\\\\\\')}')">
+                    <img src="${src}" style="width:100%;height:150px;object-fit:cover;background:#333" onerror="this.style.display='none'">
+                    <div style="padding:6px;font-size:11px;color:#aaa">${img.backend} · ${img.width}x${img.height} · ${formatDate(img.created_at)}</div>
+                </div>`;
+            }).join('') || '<p style="color:#888">No images yet.</p>';
+        }
+        function selectVideoImage(path) {
+            const el = document.getElementById('vs-images-json');
+            if (!el) return;
+            let current = [];
+            try { current = JSON.parse(el.value || '[]'); } catch (e) { current = []; }
+            if (!current.includes(path)) current.push(path);
+            el.value = JSON.stringify(current);
         }
         document.addEventListener('DOMContentLoaded', () => {
-            document.getElementById('vid-produce')?.addEventListener('click', async () => {
-                const status = document.getElementById('vid-status');
-                if (status) status.textContent = 'Starting production...';
-                const account = document.getElementById('vid-account').value;
-                const title = document.getElementById('vid-title').value.trim();
-                const r = await authFetch('/api/publish/' + encodeURIComponent(account), { method: 'POST' });
-                if (!r.ok) { const err = await r.json().catch(() => ({})); alert('Error: ' + (err.detail || JSON.stringify(err))); if (status) status.textContent = ''; return; }
-                const data = await r.json();
-                if (status) status.textContent = 'Queued for account: ' + data.account;
-                document.getElementById('vid-title').value = '';
-                loadVideoStudio();
-            });
+            // populate influencer dropdown
+            const sel = document.getElementById('vs-influencer');
+            if (sel) {
+                const opts = allInfluencers.map(i => `<option value="${i.id}">${i.display_name || i.name}</option>`).join('');
+                sel.innerHTML = '<option value="">Select Influencer (optional)</option>' + opts;
+            }
+            document.getElementById('vs-create')?.addEventListener('click', createVideoStudioJob);
         });
 
         // ----- Content Studio -----
@@ -1119,7 +1228,8 @@
         loadCalendar();
         loadImageBackends();
         loadImageHistory();
-        loadVideoStudio();
+        loadVideoStudioJobs();
+        loadVideoStudioImageHistory();
         loadContentDrafts();
         loadPublishingQueue();
         loadSettings();

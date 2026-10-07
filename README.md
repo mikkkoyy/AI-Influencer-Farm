@@ -135,6 +135,37 @@ IMAGE_GEN_BASE_URL=http://localhost:7860  # AUTOMATIC1111
 
 The application uses Edge TTS by default (no API key required). Configure voice presets per influencer in the dashboard.
 
+### Video Production
+
+The Video Studio supports direct video composition from selected images:
+
+1. **Select images** — upload new images or choose from previously generated ones
+2. **Optional narration** — provide text for TTS (Edge TTS fallback if Gemini TTS unavailable)
+3. **Optional captions** — provide text for deterministic or Whisper-generated subtitles
+4. **Configure** — set resolution (e.g. `1080x1920`), FPS, background music
+5. **Create** — FFmpeg composes the final MP4 with Ken Burns effects, transitions, and optional audio
+
+**Requirements:**
+- FFmpeg must be installed and available in PATH
+- Input images must be valid PNG/JPEG files
+- At least one image is required
+
+**Supported features:**
+- Multiple generated images with configurable duration
+- Ken Burns zoom/pan animation
+- Crossfade transitions between images
+- Background music mixing
+- Caption/subtitle burning
+- Deterministic timing when TTS timing is unavailable
+- H.264/MP4 output with configurable CRF and preset
+- Vertical 9:16 format optimized for TikTok/YouTube Shorts/Instagram Reels
+
+**FFmpeg installation (Windows):**
+1. Download from https://ffmpeg.org/download.html
+2. Extract to a folder (e.g. `C:\ffmpeg`)
+3. Add the `bin` folder to your system PATH
+4. Verify with `ffmpeg -version`
+
 ### Social Media Publishing
 
 - **TikTok**: Configure cookies in `storage/cookies/`

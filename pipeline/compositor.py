@@ -384,11 +384,21 @@ def compose_video(
     )
 
     # Burn subtitles — clean outline style, no black box
-    subtitle_escaped = str(Path(subtitle_path).resolve().as_posix()).replace(":", "\\:")
-    filter_parts.append(
-        f"[video]subtitles='{subtitle_escaped}':"
-        f"force_style='{_build_subtitle_style()}'[subtitled]"
+    subtitle_path_obj = Path(subtitle_path)
+    has_subtitles = (
+        subtitle_path_obj.exists()
+        and subtitle_path_obj.stat().st_size > 0
+        and subtitle_path_obj.read_text(encoding="utf-8", errors="ignore").strip()
     )
+    if has_subtitles:
+        subtitle_escaped = str(subtitle_path_obj.resolve().as_posix()).replace(":", "\\:")
+        filter_parts.append(
+            f"[video]subtitles='{subtitle_escaped}':"
+            f"force_style='{_build_subtitle_style()}'[subtitled]"
+        )
+        video_label = "subtitled"
+    else:
+        video_label = "video"
 
     if music_path and Path(music_path).exists():
         inputs.extend(["-i", music_path])
@@ -409,7 +419,7 @@ def compose_video(
         ffmpeg, "-y",
         *inputs,
         "-filter_complex", filter_complex,
-        "-map", "[subtitled]",
+        "-map", f"[{video_label}]",
         "-map", audio_map,
         "-c:v", "libx264",
         "-preset", _get_final_preset(),

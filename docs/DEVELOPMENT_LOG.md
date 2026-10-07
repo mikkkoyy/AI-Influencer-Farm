@@ -332,3 +332,95 @@ Add integration test for real backend detection and verify end-to-end with actua
 
 ### Recommended Next Task
 Install ComfyUI or A1111 locally and run real end-to-end generation test.
+
+---
+
+## Entry 6 — Complete Video Production Pipeline
+
+**Date:** 2026-10-07  
+**Task:** Complete the video production pipeline — direct video assembly, MP4 validation, Video Studio API, tests, documentation  
+**Branch:** main  
+**Commit:** *(pending)*
+
+### Implementation Summary
+- Added `pipeline/video_assembler.py` with:
+  - Direct video composition from user-selected images
+  - Optional TTS narration generation (Gemini TTS → Edge TTS fallback)
+  - Deterministic caption generation when speech-to-text is unavailable
+  - MP4 validation with detailed status (file exists, size, duration, codec, resolution)
+  - Path safety checks to prevent traversal attacks
+  - Progress tracking for background jobs
+- Updated `core/models.py` with new Video fields:
+  - `resolution`, `config_json`, `progress`, `rendering_time`, `content_id`
+- Added database migration `_ensure_v14_schema()` in `core/db.py`
+- Enhanced `pipeline/compositor.py`:
+  - Skip subtitle burning when subtitle file is empty or missing
+  - Use dynamic video label to avoid referencing non-existent subtitle output
+- Added comprehensive Video Studio API endpoints in `dashboard/routes.py`:
+  - `POST /api/video-studio/create` — create video from selected images + config
+  - `GET /api/video-studio/jobs` — list video jobs with filtering
+  - `GET /api/video-studio/jobs/{id}` — get detailed job status with MP4 validation
+  - `POST /api/video-studio/jobs/{id}/retry` — retry failed/cancelled jobs
+  - `POST /api/video-studio/jobs/{id}/cancel` — cancel queued jobs
+  - `GET /api/video-studio/output/{id}` — serve final video file
+  - `GET /api/video-studio/status/{id}` — real-time status/progress
+- Updated Video Studio dashboard UI:
+  - Select influencer, content, images
+  - Configure resolution, FPS, captions, narration
+  - Production progress with polling
+  - Retry, cancel, preview, download actions
+  - Error details display
+  - Recent generated images grid for quick selection
+- Added comprehensive tests in `tests/test_video_production.py`:
+  - MP4 validation (real FFmpeg test + mocked)
+  - Caption generation (deterministic)
+  - Security/path traversal
+  - API endpoints (create, list, get, retry, cancel, output, status)
+  - Database persistence
+  - Real rendering (FFmpeg end-to-end)
+  - Retry behavior
+  - Compositor unit tests
+  - Whisper subtitle mocking
+- All 69 tests pass
+
+### Files Changed
+- `pipeline/video_assembler.py` — New file (video assembly + validation + captions)
+- `core/models.py` — Added Video fields for video studio
+- `core/db.py` — Added v1.4 schema migration
+- `pipeline/compositor.py` — Skip empty subtitle filter, dynamic video label
+- `dashboard/routes.py` — Video Studio API endpoints + updated video responses
+- `dashboard/templates/index.html` — Enhanced Video Studio UI
+- `tests/test_video_production.py` — New file (28 tests)
+- `docs/DEVELOPMENT_LOG.md` — This entry
+
+### Tests Performed
+- `pytest tests/` — 69 passed, 24 warnings
+- Real FFmpeg render test — PASS (1 image → 100x176 MP4, libx264)
+- Real MP4 validation — PASS
+- End-to-end video assembly — PASS
+- Security path traversal — PASS
+- API endpoint tests — PASS
+
+### Test Results
+- PASS: 69/69 total tests
+- PASS: Real MP4 render and validation
+- PARTIAL: TTS tested via mocks (Edge TTS available but not fully tested end-to-end)
+- PASS: Dashboard app loads successfully
+
+### Commit Hash
+*(pending)*
+
+### Commit Message
+feat(video-pipeline): add video assembler, MP4 validation, Video Studio API, and tests
+
+### GitHub Push Status
+*(pending)*
+
+### Outstanding Issues
+1. ComfyUI/A1111 not installed locally — image generation still requires remote backends
+2. Real TTS (Edge TTS) not tested end-to-end in automated tests
+3. Whisper model not downloaded — deterministic captions used as fallback
+4. Video preview in dashboard uses FileResponse; large files stream directly
+
+### Recommended Next Task
+Verify real end-to-end video generation with available images and push to GitHub.

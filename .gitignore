@@ -30,6 +30,7 @@ storage/backups/**
 storage/output/**
 storage/cookies/**
 storage/image_cache/**
+storage/generated-images/**
 storage/model_probe/**
 !storage/output/.gitkeep
 !storage/output/dinero/.gitkeep

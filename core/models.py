@@ -16,7 +16,7 @@ class Video(Base):
     status = Column(String(30), nullable=False, default="pending")
     # Status values: pending, scripting, generating_video, generating_tts,
     # subtitling, compositing, reviewing, uploading_drive, publishing,
-    # published, failed, rejected
+    # published, failed, rejected, queued, processing, completed, cancelled, cancelling
 
     title = Column(String(500))
     script_text = Column(Text)
@@ -53,6 +53,13 @@ class Video(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
     published_at = Column(DateTime)
+
+    # Video Studio v1.4 fields
+    resolution = Column(String(20))
+    config_json = Column(Text)
+    progress = Column(Integer, default=0)
+    rendering_time = Column(Float)
+    content_id = Column(Integer)
 
     __table_args__ = (
         Index("idx_videos_account_status", "account", "status"),
